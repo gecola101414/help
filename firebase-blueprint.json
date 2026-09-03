@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "HelpItem": {
+      "title": "HelpItem",
+      "description": "An offer or request for help in the local community",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userNickname": { "type": "string" },
+        "type": { "type": "string", "enum": ["offer", "request"] },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string" },
+        "creditsRequired": { "type": "number" },
+        "isFree": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "in_progress", "completed", "cancelled"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["userId", "userNickname", "type", "title", "category", "status", "createdAt"]
+    },
+    "HelpMessage": {
+      "title": "HelpMessage",
+      "description": "A message sent in the chat of a help item",
+      "type": "object",
+      "properties": {
+        "helpItemId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderNickname": { "type": "string" },
+        "text": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["helpItemId", "senderId", "senderNickname", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/help_items/{itemId}": {
+      "schema": { "$ref": "#/entities/HelpItem" },
+      "description": "Collection of community help offers and requests"
+    },
+    "/help_messages/{msgId}": {
+      "schema": { "$ref": "#/entities/HelpMessage" },
+      "description": "Messages exchanged for specific help items"
+    }
+  }
+}

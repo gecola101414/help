@@ -66,7 +66,7 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState('feed');
-  const [distanceRadius, setDistanceRadius] = useState<number>(25); // km
+  const [distanceRadius, setDistanceRadius] = useState<number>(0); // 0 = Tutta Italia / Senza Limiti di raggio
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<HelpItem | null>(null);
@@ -119,44 +119,153 @@ export default function App() {
     }
   }, []);
 
+  // Helper to attach distance to items and discard legacy mock items
+  const enrichItemsWithDistance = (itemList: HelpItem[], currentUser: UserProfile | null) => {
+    return itemList
+      .filter((item) => item && !item.id?.startsWith('init-'))
+      .map((item) => {
+        const dist = currentUser?.location?.lat
+          ? Number(calculateDistance(currentUser.location.lat, currentUser.location.lng, item.location.lat, item.location.lng).toFixed(1))
+          : (item.distanceKm || 1.0);
+        return { ...item, distanceKm: dist };
+      });
+  };
+
+  // Keep reference to latest user for distance calculations in real-time callbacks
+  const userRef = React.useRef<UserProfile | null>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   // Sync items to localStorage
   useEffect(() => {
-    localStorage.setItem('help_items_local', JSON.stringify(items));
+    const cleanItems = items.filter(i => !i.id?.startsWith('init-'));
+    localStorage.setItem('help_items_local', JSON.stringify(cleanItems));
   }, [items]);
 
-  // Initialize Firebase auth and items subscription with graceful fallback
+  // Server API fetching and syncing
+  const fetchServerItems = async () => {
+    try {
+      const res = await fetch('/api/help-items');
+      if (res.ok) {
+        const serverList = await res.json();
+        if (Array.isArray(serverList)) {
+          const cleanServerList = serverList.filter(i => !i.id?.startsWith('init-'));
+          setItems(enrichItemsWithDistance(cleanServerList, userRef.current));
+        }
+      }
+    } catch (err) {
+      // Server offline or network issue
+    }
+  };
+
+  // Multi-device real-time synchronization effect (SSE Push + Polling Fallback)
+  useEffect(() => {
+    fetchServerItems();
+
+    // 1. Real-time Server-Sent Events stream for instant sub-second sync across devices
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/help-items/stream');
+      eventSource.onmessage = (e) => {
+        try {
+          const list = JSON.parse(e.data);
+          if (Array.isArray(list)) {
+            const cleanList = list.filter((i: any) => !i.id?.startsWith('init-'));
+            setItems(enrichItemsWithDistance(cleanList, userRef.current));
+          }
+        } catch (err) {}
+      };
+      eventSource.onerror = () => {
+        // SSE will attempt auto-reconnect; fallback polling ensures updates continue
+      };
+    } catch (e) {}
+
+    // Check if there are local items to sync to server
+    const saved = localStorage.getItem('help_items_local');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          fetch('/api/help-items/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed),
+          })
+            .then((r) => r.json())
+            .then((merged) => {
+              if (Array.isArray(merged)) {
+                setItems(enrichItemsWithDistance(merged, userRef.current));
+              }
+            })
+            .catch(() => {});
+        }
+      } catch (e) {}
+    }
+
+    // Polling fallback every 3 seconds
+    const interval = setInterval(fetchServerItems, 3000);
+    const handleFocus = () => fetchServerItems();
+    const handleOnline = () => fetchServerItems();
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [user?.location?.lat, user?.location?.lng]);
+
+  // Firestore real-time listener (dual-channel sync)
   useEffect(() => {
     let unsubscribeItems: (() => void) | undefined;
 
-    async function init() {
+    async function initFirestore() {
       try {
         await ensureAuth();
 
-        // Listen to Firestore help_items
-        unsubscribeItems = onSnapshot(collection(db, 'help_items'), (snapshot) => {
-          if (!snapshot.empty) {
-            const fetched: HelpItem[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data() as HelpItem;
-              const dist = user ? calculateDistance(user.location.lat, user.location.lng, data.location.lat, data.location.lng) : 1.0;
-              fetched.push({ id: docSnap.id, ...data, distanceKm: dist });
-            });
-            setItems(fetched);
+        unsubscribeItems = onSnapshot(
+          collection(db, 'help_items'),
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const fetched: HelpItem[] = [];
+              snapshot.forEach((docSnap) => {
+                const data = docSnap.data() as HelpItem;
+                const dist = user
+                  ? calculateDistance(user.location.lat, user.location.lng, data.location.lat, data.location.lng)
+                  : 1.0;
+                fetched.push({ id: docSnap.id, ...data, distanceKm: dist });
+              });
+
+              setItems((prev) => {
+                const map = new Map<string, HelpItem>();
+                fetched.forEach((item) => map.set(item.id, item));
+                prev.forEach((item) => {
+                  if (!map.has(item.id)) map.set(item.id, item);
+                });
+                return Array.from(map.values());
+              });
+            }
+          },
+          (err) => {
+            // Handled via server polling
           }
-        }, (err) => {
-          // Silent fallback to local state
-        });
+        );
       } catch (err) {
-        // Silent fallback
+        // Handled via server polling
       }
     }
 
-    init();
+    initFirestore();
 
     return () => {
       if (unsubscribeItems) unsubscribeItems();
     };
-  }, [user?.location]);
+  }, [user?.location?.lat, user?.location?.lng]);
 
   // Save user profile to localStorage & sync
   const handleSaveProfile = (updated: Partial<UserProfile>) => {
@@ -177,7 +286,9 @@ export default function App() {
   }) => {
     if (!user) return;
 
+    const newId = 'help-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
     const newItemData = {
+      id: newId,
       userId: user.id,
       userNickname: user.nickname,
       type: newHelpData.type,
@@ -192,17 +303,29 @@ export default function App() {
     };
 
     const localItem: HelpItem = {
-      id: 'local-' + Date.now(),
       ...newItemData,
-      distanceKm: 0.5,
+      distanceKm: 0.1,
     };
 
+    // Update locally immediately
     setItems((prev) => [localItem, ...prev]);
 
+    // 1. Post to Server shared API (syncs to PC/mobile immediately)
+    try {
+      await fetch('/api/help-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItemData),
+      });
+    } catch (err) {
+      console.warn('Server item post failed:', err);
+    }
+
+    // 2. Also save to Firestore cloud database
     try {
       await addDoc(collection(db, 'help_items'), newItemData);
     } catch (err) {
-      // Handled locally
+      console.warn('Firestore write fallback:', err);
     }
   };
 
@@ -210,7 +333,7 @@ export default function App() {
   const handleUpdateItemStatus = async (itemId: string, newStatus: HelpItem['status'], helperId?: string, helperNickname?: string) => {
     // If completed, update credits and karma
     if (newStatus === 'completed' && user) {
-      const targetItem = items.find(i => i.id === itemId);
+      const targetItem = items.find((i) => i.id === itemId);
       const earnedCredits = targetItem && targetItem.creditsRequired > 0 ? targetItem.creditsRequired : 1;
       const updatedCredits = user.credits + earnedCredits;
       const updatedHelped = (user.helpedCount || 0) + 1;
@@ -220,31 +343,53 @@ export default function App() {
 
     // Update local state immediately
     setItems((prev) =>
-      prev.map((i) => (i.id === itemId ? { ...i, status: newStatus, helperId: helperId || i.helperId, helperNickname: helperNickname || i.helperNickname } : i))
+      prev.map((i) =>
+        i.id === itemId
+          ? { ...i, status: newStatus, helperId: helperId || i.helperId, helperNickname: helperNickname || i.helperNickname }
+          : i
+      )
     );
     if (selectedItem && selectedItem.id === itemId) {
-      setSelectedItem((prev) => prev ? { ...prev, status: newStatus, helperId: helperId || prev.helperId, helperNickname: helperNickname || prev.helperNickname } : null);
+      setSelectedItem((prev) =>
+        prev
+          ? { ...prev, status: newStatus, helperId: helperId || prev.helperId, helperNickname: helperNickname || prev.helperNickname }
+          : null
+      );
     }
 
+    const updatePayload: any = { status: newStatus };
+    if (helperId) updatePayload.helperId = helperId;
+    if (helperNickname) updatePayload.helperNickname = helperNickname;
+
+    // 1. Update on Server API
+    try {
+      await fetch(`/api/help-items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload),
+      });
+    } catch (err) {}
+
+    // 2. Update on Firestore
     try {
       const itemRef = doc(db, 'help_items', itemId);
-      const updatePayload: any = { status: newStatus };
-      if (helperId) updatePayload.helperId = helperId;
-      if (helperNickname) updatePayload.helperNickname = helperNickname;
       await updateDoc(itemRef, updatePayload);
-    } catch (err) {
-      // Handled locally
-    }
+    } catch (err) {}
   };
 
   // Delete item
   const handleDeleteItem = async (itemId: string) => {
     setItems((prev) => prev.filter((i) => i.id !== itemId));
+
+    // 1. Delete on Server API
+    try {
+      await fetch(`/api/help-items/${itemId}`, { method: 'DELETE' });
+    } catch (err) {}
+
+    // 2. Delete on Firestore
     try {
       await deleteDoc(doc(db, 'help_items', itemId));
-    } catch (err) {
-      // Handled locally
-    }
+    } catch (err) {}
   };
 
   return (
@@ -268,6 +413,7 @@ export default function App() {
             items={items}
             user={user}
             distanceRadius={distanceRadius}
+            setDistanceRadius={setDistanceRadius}
             onSelectItem={(item) => setSelectedItem(item)}
             onOpenCreate={() => setIsCreateOpen(true)}
             onOpenProfile={() => setIsProfileOpen(true)}

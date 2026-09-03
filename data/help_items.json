@@ -1,0 +1,56 @@
+[
+  {
+    "id": "help-1788464285734-xnodo",
+    "userId": "user-547anfs",
+    "userNickname": "GIMMY",
+    "type": "offer",
+    "title": "ripetizioen di storia e italiano",
+    "description": "dal 15 settembre sono disponibile per lezioni d istoria e italiano",
+    "category": "Ripetizioni e Aiuto Studio",
+    "location": {
+      "lat": 43.952474927714846,
+      "lng": 8.13895229142836,
+      "address": "Savona / Liguria (GPS 43.952, 8.139)"
+    },
+    "creditsRequired": 0,
+    "isFree": true,
+    "status": "active",
+    "createdAt": 1788464285734
+  },
+  {
+    "id": "help-1788464094901-01jmu",
+    "userId": "user-547anfs",
+    "userNickname": "GIMMY",
+    "type": "offer",
+    "title": "milano",
+    "description": "partenza da savona alle 22",
+    "category": "Passaggio in Auto e Mobilità",
+    "location": {
+      "lat": 43.95247752518325,
+      "lng": 8.139160395178223,
+      "address": "Savona / Liguria (GPS 43.952, 8.139)"
+    },
+    "creditsRequired": 0,
+    "isFree": true,
+    "status": "active",
+    "createdAt": 1788464094901
+  },
+  {
+    "id": "local-1788456419318",
+    "userId": "user-547anfs",
+    "userNickname": "GIMMY",
+    "type": "offer",
+    "title": "riparo bici forate a domicilio",
+    "description": "vengo a casa tua a riparare biciclette",
+    "category": "Riparazione Bici e Oggetti",
+    "location": {
+      "lat": 45.4642,
+      "lng": 9.19,
+      "address": "Milano, Centro"
+    },
+    "creditsRequired": 0,
+    "isFree": true,
+    "status": "active",
+    "createdAt": 1788456419318
+  }
+]

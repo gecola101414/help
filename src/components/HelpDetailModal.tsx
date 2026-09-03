@@ -26,22 +26,63 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   useEffect(() => {
     if (!isOpen || !item) return;
 
-    // Listen to messages for this help item
-    const q = query(
-      collection(db, 'help_messages'),
-      where('helpItemId', '==', item.id)
-    );
+    // 1. Fetch from server API
+    const fetchServerMessages = async () => {
+      try {
+        const res = await fetch(`/api/help-items/${item.id}/messages`);
+        if (res.ok) {
+          const sMsgs = await res.json();
+          if (Array.isArray(sMsgs)) {
+            setMessages((prev) => {
+              const map = new Map<string, ChatMessage>();
+              prev.forEach((m) => map.set(m.id, m));
+              sMsgs.forEach((m: ChatMessage) => map.set(m.id, m));
+              const combined = Array.from(map.values());
+              combined.sort((a, b) => a.createdAt - b.createdAt);
+              return combined;
+            });
+          }
+        }
+      } catch (err) {}
+    };
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs: ChatMessage[] = [];
-      snapshot.forEach((docSnap) => {
-        msgs.push({ id: docSnap.id, ...docSnap.data() } as ChatMessage);
-      });
-      msgs.sort((a, b) => a.createdAt - b.createdAt);
-      setMessages(msgs);
-    });
+    fetchServerMessages();
+    const interval = setInterval(fetchServerMessages, 3000);
 
-    return () => unsubscribe();
+    // 2. Listen to Firestore messages
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const q = query(
+        collection(db, 'help_messages'),
+        where('helpItemId', '==', item.id)
+      );
+
+      unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          const msgs: ChatMessage[] = [];
+          snapshot.forEach((docSnap) => {
+            msgs.push({ id: docSnap.id, ...docSnap.data() } as ChatMessage);
+          });
+          if (msgs.length > 0) {
+            setMessages((prev) => {
+              const map = new Map<string, ChatMessage>();
+              prev.forEach((m) => map.set(m.id, m));
+              msgs.forEach((m) => map.set(m.id, m));
+              const combined = Array.from(map.values());
+              combined.sort((a, b) => a.createdAt - b.createdAt);
+              return combined;
+            });
+          }
+        },
+        () => {}
+      );
+    } catch (err) {}
+
+    return () => {
+      clearInterval(interval);
+      if (unsubscribe) unsubscribe();
+    };
   }, [isOpen, item]);
 
   if (!isOpen || !item) return null;
@@ -53,18 +94,33 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     e.preventDefault();
     if (!inputText.trim() || !user) return;
 
+    const msgPayload = {
+      id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      helpItemId: item.id,
+      senderId: user.id,
+      senderNickname: user.nickname,
+      text: inputText.trim(),
+      createdAt: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, msgPayload]);
+    setInputText('');
     setLoadingMsg(true);
+
+    // 1. Post to server API
     try {
-      await addDoc(collection(db, 'help_messages'), {
-        helpItemId: item.id,
-        senderId: user.id,
-        senderNickname: user.nickname,
-        text: inputText.trim(),
-        createdAt: Date.now(),
+      await fetch(`/api/help-items/${item.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(msgPayload),
       });
-      setInputText('');
+    } catch (err) {}
+
+    // 2. Post to Firestore
+    try {
+      await addDoc(collection(db, 'help_messages'), msgPayload);
     } catch (err) {
-      console.error('Error sending message:', err);
+      console.error('Error sending Firestore message:', err);
     } finally {
       setLoadingMsg(false);
     }

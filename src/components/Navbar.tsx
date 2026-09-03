@@ -107,12 +107,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onChange={(e) => setDistanceRadius(Number(e.target.value))}
                 className="bg-transparent font-semibold text-gray-900 focus:outline-hidden cursor-pointer"
               >
-                <option value={2}>2 km</option>
-                <option value={5}>5 km</option>
-                <option value={10}>10 km</option>
-                <option value={25}>25 km</option>
+                <option value={0}>Tutta Italia (Senza Limiti)</option>
+                <option value={500}>500 km</option>
+                <option value={100}>100 km</option>
                 <option value={50}>50 km</option>
-                <option value={500}>Tutti (Ovunque)</option>
+                <option value={25}>25 km</option>
+                <option value={10}>10 km</option>
+                <option value={5}>5 km</option>
+                <option value={2}>2 km</option>
               </select>
             </div>
 

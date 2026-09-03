@@ -6,6 +6,7 @@ interface HelpFeedProps {
   items: HelpItem[];
   user: UserProfile | null;
   distanceRadius: number;
+  setDistanceRadius?: (radius: number) => void;
   onSelectItem: (item: HelpItem) => void;
   onOpenCreate: () => void;
   onOpenProfile: () => void;
@@ -15,6 +16,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
   items,
   user,
   distanceRadius,
+  setDistanceRadius,
   onSelectItem,
   onOpenCreate,
   onOpenProfile,
@@ -33,8 +35,8 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
     // Category filter
     if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
 
-    // Distance filter
-    if (item.distanceKm !== undefined && item.distanceKm > distanceRadius) return false;
+    // Distance filter (0 means unlimited / tutta Italia)
+    if (distanceRadius > 0 && item.distanceKm !== undefined && item.distanceKm > distanceRadius) return false;
 
     // Search query
     if (searchQuery.trim()) {
@@ -48,6 +50,10 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
     return true;
   });
+
+  const itemsExcludedByDistance = items.filter(
+    (item) => distanceRadius > 0 && item.distanceKm !== undefined && item.distanceKm > distanceRadius
+  ).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-in fade-in duration-300">
@@ -101,43 +107,87 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
             />
           </div>
 
-          {/* Type Filters */}
-          <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 lg:pb-0">
-            <button
-              onClick={() => setFilterType('all')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                filterType === 'all' ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Tutti ({items.length})
-            </button>
-            <button
-              onClick={() => setFilterType('offer')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                filterType === 'offer' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-              }`}
-            >
-              Offerte di Aiuto
-            </button>
-            <button
-              onClick={() => setFilterType('request')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                filterType === 'request' ? 'bg-teal-700 text-white shadow-xs' : 'bg-teal-50 text-teal-800 hover:bg-teal-100'
-              }`}
-            >
-              Richieste
-            </button>
-            <button
-              onClick={() => setFilterType('free')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
-                filterType === 'free' ? 'bg-amber-600 text-white shadow-xs' : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
-              }`}
-            >
-              Gratuiti
-            </button>
+          {/* Type Filters & Distance Selector */}
+          <div className="flex items-center flex-wrap gap-2">
+            {/* Distance Selector */}
+            {setDistanceRadius && (
+              <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs text-slate-700">
+                <Compass className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span className="font-semibold text-slate-500">Raggio:</span>
+                <select
+                  value={distanceRadius}
+                  onChange={(e) => setDistanceRadius(Number(e.target.value))}
+                  className="bg-transparent font-bold text-slate-900 focus:outline-hidden cursor-pointer"
+                >
+                  <option value={0}>Tutta Italia (Senza Limiti)</option>
+                  <option value={500}>500 km</option>
+                  <option value={100}>100 km</option>
+                  <option value={50}>50 km</option>
+                  <option value={25}>25 km</option>
+                  <option value={10}>10 km</option>
+                  <option value={5}>5 km</option>
+                </select>
+              </div>
+            )}
+
+            <div className="flex items-center space-x-1.5 overflow-x-auto">
+              <button
+                onClick={() => setFilterType('all')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  filterType === 'all' ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Tutti ({items.length})
+              </button>
+              <button
+                onClick={() => setFilterType('offer')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  filterType === 'offer' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                }`}
+              >
+                Offerte
+              </button>
+              <button
+                onClick={() => setFilterType('request')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  filterType === 'request' ? 'bg-teal-700 text-white shadow-xs' : 'bg-teal-50 text-teal-800 hover:bg-teal-100'
+                }`}
+              >
+                Richieste
+              </button>
+              <button
+                onClick={() => setFilterType('free')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  filterType === 'free' ? 'bg-amber-600 text-white shadow-xs' : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                }`}
+              >
+                Gratis
+              </button>
+            </div>
           </div>
 
         </div>
+
+        {/* Banner if items are excluded by distance */}
+        {itemsExcludedByDistance > 0 && (
+          <div className="bg-amber-50/90 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <MapPin className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                Ci sono <strong>{itemsExcludedByDistance} annunci</strong> pubblicati oltre il raggio di {distanceRadius} km (es. altre città o regioni).
+              </span>
+            </div>
+            {setDistanceRadius && (
+              <button
+                type="button"
+                onClick={() => setDistanceRadius(0)}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition-all self-start sm:self-auto cursor-pointer"
+              >
+                Mostra Tutti gli Annunci (Tutta Italia)
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Categories horizontal scroll */}
         <div className="flex items-center space-x-2 overflow-x-auto pt-2 border-t border-slate-100 pb-1">
@@ -169,14 +219,28 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
           <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">
             🔍
           </div>
-          <h3 className="text-lg font-bold text-slate-900">Nessun aiuto trovato nel raggio di {distanceRadius} km</h3>
+          <h3 className="text-lg font-bold text-slate-900">
+            {distanceRadius > 0
+              ? `Nessun annuncio trovato nel raggio di ${distanceRadius} km`
+              : 'Nessun annuncio trovato con i filtri selezionati'}
+          </h3>
           <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-            Prova ad ampliare il raggio di ricerca in alto nella barra di navigazione oppure pubblica tu stesso il primo aiuto nella zona!
+            {distanceRadius > 0 && items.length > 0
+              ? `Ci sono ${items.length} annunci disponibili allargando il raggio a tutta Italia!`
+              : 'Pubblica tu stesso il primo aiuto o richiesta di solidarietà nella tua zona!'}
           </p>
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap justify-center gap-2">
+            {distanceRadius > 0 && items.length > 0 && setDistanceRadius && (
+              <button
+                onClick={() => setDistanceRadius(0)}
+                className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-md transition-all cursor-pointer"
+              >
+                Vedi Tutti gli Annunci ({items.length})
+              </button>
+            )}
             <button
               onClick={onOpenCreate}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
             >
               Pubblica un Aiuto Ora
             </button>
@@ -203,7 +267,11 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
                       <span>{isOffer ? 'Offre Aiuto' : 'Cerca Aiuto'}</span>
                     </span>
                     <span className="text-xs text-slate-400 font-medium">
-                      {item.distanceKm !== undefined ? `${item.distanceKm} km da te` : 'Vicinanze'}
+                      {item.distanceKm !== undefined
+                        ? item.distanceKm < 1
+                          ? 'A meno di 1 km'
+                          : `${item.distanceKm} km da te`
+                        : 'Vicinanze'}
                     </span>
                   </div>
 
@@ -224,7 +292,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
                 <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs">
                   <div className="flex items-center space-x-1.5 text-slate-500">
                     <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="truncate max-w-[120px]">{item.location.address}</span>
+                    <span className="truncate max-w-[140px]">{item.location?.address || 'Posizione indicata'}</span>
                   </div>
                   <div className="flex items-center space-x-1 font-bold text-amber-600">
                     <Coins className="w-3.5 h-3.5" />

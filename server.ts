@@ -1,16 +1,213 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
+const DATA_DIR = path.join(process.cwd(), "data");
+const ITEMS_FILE = path.join(DATA_DIR, "help_items.json");
+
+function getStoredItems(): any[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(ITEMS_FILE)) {
+      fs.writeFileSync(ITEMS_FILE, "[]", "utf-8");
+      return [];
+    }
+    const data = fs.readFileSync(ITEMS_FILE, "utf-8");
+    return JSON.parse(data) || [];
+  } catch (err) {
+    console.error("Error reading items file:", err);
+    return [];
+  }
+}
+
+function saveStoredItems(items: any[]) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(ITEMS_FILE, JSON.stringify(items, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving items file:", err);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Real-time Server-Sent Events (SSE) client registry
+  const sseClients = new Set<express.Response>();
+
+  function broadcastItemsUpdate(items: any[]) {
+    const payload = `data: ${JSON.stringify(items)}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(payload);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // SSE Stream endpoint for instantaneous updates across all devices
+  app.get("/api/help-items/stream", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    if (typeof (res as any).flushHeaders === "function") {
+      (res as any).flushHeaders();
+    }
+
+    // Send immediate current state
+    const current = getStoredItems();
+    res.write(`data: ${JSON.stringify(current)}\n\n`);
+
+    sseClients.add(res);
+
+    // Heartbeat every 20s
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(": heartbeat\n\n");
+      } catch {
+        clearInterval(keepAlive);
+        sseClients.delete(res);
+      }
+    }, 20000);
+
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      sseClients.delete(res);
+    });
+  });
+
+  // API Routes for shared cross-device help items
+  app.get("/api/help-items", (req, res) => {
+    res.json(getStoredItems());
+  });
+
+  app.post("/api/help-items", (req, res) => {
+    const newItem = req.body;
+    if (!newItem.title) {
+      return res.status(400).json({ error: "Title is required" });
+    }
+    const items = getStoredItems();
+    const itemToSave = {
+      ...newItem,
+      id: newItem.id || `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: newItem.createdAt || Date.now(),
+      status: newItem.status || 'active',
+    };
+    
+    // Check if already exists by id
+    const existingIndex = items.findIndex((i: any) => i.id === itemToSave.id);
+    if (existingIndex >= 0) {
+      items[existingIndex] = itemToSave;
+    } else {
+      items.unshift(itemToSave);
+    }
+    saveStoredItems(items);
+    broadcastItemsUpdate(items);
+    res.status(201).json(itemToSave);
+  });
+
+  // Sync array of items from client
+  app.post("/api/help-items/sync", (req, res) => {
+    const clientItems = req.body;
+    if (!Array.isArray(clientItems)) {
+      return res.status(400).json({ error: "Expected array of items" });
+    }
+    const items = getStoredItems().filter((i: any) => !i.id?.startsWith('init-'));
+    let modified = false;
+
+    clientItems.forEach((cItem: any) => {
+      if (!cItem || !cItem.title || cItem.id?.startsWith('init-')) return;
+      const index = items.findIndex((i: any) => i.id === cItem.id || (i.title === cItem.title && i.userId === cItem.userId));
+      if (index >= 0) {
+        items[index] = { ...items[index], ...cItem };
+        modified = true;
+      } else {
+        items.unshift(cItem);
+        modified = true;
+      }
+    });
+
+    if (modified) {
+      saveStoredItems(items);
+      broadcastItemsUpdate(items);
+    }
+    res.json(items);
+  });
+
+  app.patch("/api/help-items/:id", (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    const items = getStoredItems();
+    const index = items.findIndex((i: any) => i.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "Item not found" });
+    }
+    items[index] = { ...items[index], ...updates };
+    saveStoredItems(items);
+    broadcastItemsUpdate(items);
+    res.json(items[index]);
+  });
+
+  app.delete("/api/help-items/:id", (req, res) => {
+    const { id } = req.params;
+    let items = getStoredItems();
+    items = items.filter((i: any) => i.id !== id);
+    saveStoredItems(items);
+    broadcastItemsUpdate(items);
+    res.json({ success: true });
+  });
+
+  // Chat messages API
+  const MESSAGES_FILE = path.join(DATA_DIR, "help_messages.json");
+  function getStoredMessages(): any[] {
+    try {
+      if (!fs.existsSync(MESSAGES_FILE)) return [];
+      return JSON.parse(fs.readFileSync(MESSAGES_FILE, "utf-8")) || [];
+    } catch {
+      return [];
+    }
+  }
+  function saveStoredMessages(msgs: any[]) {
+    try {
+      fs.writeFileSync(MESSAGES_FILE, JSON.stringify(msgs, null, 2), "utf-8");
+    } catch {}
+  }
+
+  app.get("/api/help-items/:id/messages", (req, res) => {
+    const { id } = req.params;
+    const msgs = getStoredMessages().filter((m: any) => m.helpItemId === id);
+    res.json(msgs);
+  });
+
+  app.post("/api/help-items/:id/messages", (req, res) => {
+    const { id } = req.params;
+    const msg = req.body;
+    const all = getStoredMessages();
+    const newMsg = {
+      id: msg.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      helpItemId: id,
+      senderId: msg.senderId,
+      senderNickname: msg.senderNickname,
+      text: msg.text,
+      createdAt: msg.createdAt || Date.now(),
+    };
+    all.push(newMsg);
+    saveStoredMessages(all);
+    res.status(201).json(newMsg);
+  });
 
   // Gemini AI endpoint for custom help generation and matching
   app.post("/api/ai-help", async (req, res) => {
