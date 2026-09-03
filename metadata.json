@@ -1,0 +1,7 @@
+{
+  "name": "HELP",
+  "description": "Piattaforma di aiuto reciproco e civile convivenza a 360 gradi geolocalizzata senza registrazione formale",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
