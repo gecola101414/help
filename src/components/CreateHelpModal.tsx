@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2 } from 'lucide-react';
+import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2, Compass, Radio, Building2, Navigation, Check, Search, LocateFixed } from 'lucide-react';
 import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES } from '../types';
 
 interface CreateHelpModalProps {
@@ -13,6 +13,18 @@ interface CreateHelpModalProps {
     category: string;
     creditsRequired: number;
     isFree: boolean;
+    trackingType: 'dynamic' | 'static';
+    actionRadiusKm: number;
+    staticLocation?: {
+      comune: string;
+      via?: string;
+      civico?: string;
+      formattedAddress: string;
+    };
+    customCoords?: {
+      lat: number;
+      lng: number;
+    };
   }) => void;
   onOpenProfile: () => void;
 }
@@ -25,15 +37,79 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   onOpenProfile,
 }) => {
   const [type, setType] = useState<HelpType>('offer');
+  const [trackingType, setTrackingType] = useState<'dynamic' | 'static'>('dynamic');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState(DEFAULT_HELP_CATEGORIES[0].id);
   const [creditsRequired, setCreditsRequired] = useState<number>(0);
   const [isFree, setIsFree] = useState<boolean>(true);
-  
+  const [actionRadiusKm, setActionRadiusKm] = useState<number>(5);
+
+  // Static location states (Comune, Via, Civico)
+  const [staticComune, setStaticComune] = useState(() => {
+    if (!user?.location?.address) return 'Roma';
+    const firstPart = user.location.address.split(',')[0]?.trim();
+    return firstPart.startsWith('GPS') ? 'Roma' : firstPart;
+  });
+  const [staticVia, setStaticVia] = useState('');
+  const [staticCivico, setStaticCivico] = useState('');
+  const [staticCoords, setStaticCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [staticFormattedAddress, setStaticFormattedAddress] = useState('');
+  const [isGeocoding, setIsGeocoding] = useState(false);
+  const [geocodeFeedback, setGeocodeFeedback] = useState<{ status: 'success' | 'error' | 'idle'; message: string }>({
+    status: 'idle',
+    message: '',
+  });
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const handleGeocodeAddress = async () => {
+    if (!staticComune.trim()) {
+      setGeocodeFeedback({ status: 'error', message: 'Inserisci almeno il Comune.' });
+      return;
+    }
+    setIsGeocoding(true);
+    setGeocodeFeedback({ status: 'idle', message: '' });
+    try {
+      const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
+      const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
+      const data = await res.json();
+      if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+        setStaticCoords({ lat: data.lat, lng: data.lng });
+        const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+        setStaticFormattedAddress(pretty || data.displayName);
+        setGeocodeFeedback({
+          status: 'success',
+          message: `Localizzato: ${pretty || data.displayName} (${data.lat.toFixed(4)}, ${data.lng.toFixed(4)})`,
+        });
+      } else {
+        setGeocodeFeedback({
+          status: 'error',
+          message: 'Indirizzo non trovato con precisione. Verranno usate le coordinate approssimative.',
+        });
+      }
+    } catch {
+      setGeocodeFeedback({
+        status: 'error',
+        message: 'Impossibile verificare l’indirizzo al momento.',
+      });
+    } finally {
+      setIsGeocoding(false);
+    }
+  };
+
+  const handleUseCurrentLocationAsStatic = () => {
+    if (user?.location) {
+      setStaticCoords({ lat: user.location.lat, lng: user.location.lng });
+      setStaticFormattedAddress(user.location.address || 'Punto fissato');
+      setGeocodeFeedback({
+        status: 'success',
+        message: `Fissato sulla tua posizione attuale: ${user.location.address}`,
+      });
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -98,11 +174,41 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !description.trim()) {
       setError('Compila titolo e descrizione.');
       return;
+    }
+
+    let finalCoords = staticCoords;
+    let formattedAddr = staticFormattedAddress;
+
+    if (trackingType === 'static') {
+      if (!staticComune.trim()) {
+        setError('Specifica almeno il Comune per l’annuncio statico.');
+        return;
+      }
+      if (!finalCoords) {
+        try {
+          const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
+          const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
+          const data = await res.json();
+          if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+            finalCoords = { lat: data.lat, lng: data.lng };
+            formattedAddr = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+          }
+        } catch {
+          finalCoords = user?.location ? { lat: user.location.lat, lng: user.location.lng } : { lat: 45.4642, lng: 9.1900 };
+        }
+      }
+
+      if (!finalCoords) {
+        finalCoords = user?.location ? { lat: user.location.lat, lng: user.location.lng } : { lat: 45.4642, lng: 9.1900 };
+      }
+      if (!formattedAddr) {
+        formattedAddr = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ') || 'Luogo fisico';
+      }
     }
 
     onSave({
@@ -112,6 +218,15 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       category,
       creditsRequired: isFree ? 0 : Number(creditsRequired),
       isFree,
+      trackingType,
+      actionRadiusKm,
+      staticLocation: trackingType === 'static' ? {
+        comune: staticComune.trim(),
+        via: staticVia.trim() || undefined,
+        civico: staticCivico.trim() || undefined,
+        formattedAddress: formattedAddr,
+      } : undefined,
+      customCoords: trackingType === 'static' ? (finalCoords || undefined) : undefined,
     });
     onClose();
   };
@@ -144,7 +259,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             <button
               type="button"
               onClick={() => setType('offer')}
-              className={`py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 border transition-all ${
+              className={`py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 border transition-all cursor-pointer ${
                 type === 'offer'
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/20'
                   : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -156,7 +271,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             <button
               type="button"
               onClick={() => setType('request')}
-              className={`py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 border transition-all ${
+              className={`py-3 px-4 rounded-xl text-xs font-bold flex items-center justify-center space-x-2 border transition-all cursor-pointer ${
                 type === 'request'
                   ? 'bg-teal-700 text-white border-teal-700 shadow-md shadow-teal-700/20'
                   : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -165,6 +280,150 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               <HelpCircle className="w-4 h-4" />
               <span>Ho Bisogno di Aiuto</span>
             </button>
+          </div>
+
+          {/* TWO MODES: Dynamic (Persona) vs Static (Luogo Fisso) */}
+          <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 space-y-3">
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+              Modalità di Presenza & Localizzazione
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTrackingType('dynamic');
+                  if (actionRadiusKm === 0.3 || actionRadiusKm === 0.5) setActionRadiusKm(5);
+                }}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  trackingType === 'dynamic'
+                    ? 'bg-teal-700 text-white border-teal-700 shadow-md shadow-teal-700/20'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center space-x-2 mb-1">
+                  <Radio className={`w-4 h-4 ${trackingType === 'dynamic' ? 'text-teal-200 animate-pulse' : 'text-teal-600'}`} />
+                  <span className="font-extrabold text-xs">🏃 Dinamico (Segue Te)</span>
+                </div>
+                <p className={`text-[11px] leading-snug ${trackingType === 'dynamic' ? 'text-teal-100' : 'text-slate-500'}`}>
+                  L'annuncio segue i tuoi spostamenti via GPS in tempo reale. Perfetto per chi è in giro o offre disponibilità personale.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTrackingType('static');
+                  if (actionRadiusKm === 5 || actionRadiusKm === 10) setActionRadiusKm(1);
+                }}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  trackingType === 'static'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-600/20'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center space-x-2 mb-1">
+                  <Building2 className={`w-4 h-4 ${trackingType === 'static' ? 'text-amber-100' : 'text-amber-600'}`} />
+                  <span className="font-extrabold text-xs">📌 Statico (Luogo Fisso)</span>
+                </div>
+                <p className={`text-[11px] leading-snug ${trackingType === 'static' ? 'text-amber-100' : 'text-slate-500'}`}>
+                  Fissato a un indirizzo (Comune, via o civico). Visibile solo alle persone quando passano fisicamente nel suo raggio di influenza.
+                </p>
+              </button>
+            </div>
+
+            {/* If STATIC: Detailed Address Inputs (Comune, Via, Numero Civico) */}
+            {trackingType === 'static' && (
+              <div className="mt-3 p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                    Localizza il Luogo Fisso (senza bisogno di GPS)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleUseCurrentLocationAsStatic}
+                    className="text-[11px] text-amber-800 hover:text-amber-950 underline font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <LocateFixed className="w-3 h-3" />
+                    Usa posizione attuale
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="sm:col-span-1">
+                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
+                      Comune *
+                    </label>
+                    <input
+                      type="text"
+                      value={staticComune}
+                      onChange={(e) => {
+                        setStaticComune(e.target.value);
+                        setStaticCoords(null);
+                      }}
+                      placeholder="es. Roma, Milano..."
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-1">
+                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
+                      Via / Piazza
+                    </label>
+                    <input
+                      type="text"
+                      value={staticVia}
+                      onChange={(e) => {
+                        setStaticVia(e.target.value);
+                        setStaticCoords(null);
+                      }}
+                      placeholder="es. Via Garibaldi"
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-1">
+                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
+                      N. Civico (opzionale)
+                    </label>
+                    <div className="flex space-x-1">
+                      <input
+                        type="text"
+                        value={staticCivico}
+                        onChange={(e) => {
+                          setStaticCivico(e.target.value);
+                          setStaticCoords(null);
+                        }}
+                        placeholder="es. 12"
+                        className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleGeocodeAddress}
+                        disabled={isGeocoding || !staticComune.trim()}
+                        title="Verifica coordinate indirizzo"
+                        className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-lg text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {isGeocoding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Geocode result feedback */}
+                {geocodeFeedback.message && (
+                  <div className={`text-[11px] p-2 rounded-lg flex items-center space-x-1.5 ${
+                    geocodeFeedback.status === 'success'
+                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                      : 'bg-red-100 text-red-900 border border-red-200'
+                  }`}>
+                    {geocodeFeedback.status === 'success' && <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />}
+                    <span>{geocodeFeedback.message}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* AI Generator Helper */}
@@ -242,6 +501,102 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             />
           </div>
 
+          {/* Influence Radius (Raggio d'Azione o di Influenza) */}
+          <div className={`border rounded-2xl p-4 space-y-3 ${
+            trackingType === 'dynamic'
+              ? 'bg-teal-50/80 border-teal-200'
+              : 'bg-amber-50/80 border-amber-200'
+          }`}>
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className={`flex items-center space-x-1.5 text-xs font-black uppercase tracking-wider ${
+                  trackingType === 'dynamic' ? 'text-teal-950' : 'text-amber-950'
+                }`}>
+                  {trackingType === 'dynamic' ? (
+                    <>
+                      <Radio className="w-3.5 h-3.5 text-teal-600 animate-pulse" />
+                      <span>Raggio di Disponibilità (L'annuncio ti segue in movimento)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Navigation className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Raggio di Influenza del Luogo Fisso (Chi passa di lì lo vede)</span>
+                    </>
+                  )}
+                </div>
+                <p className={`text-[11px] mt-1 leading-snug ${
+                  trackingType === 'dynamic' ? 'text-teal-800' : 'text-amber-900'
+                }`}>
+                  {trackingType === 'dynamic'
+                    ? "L'annuncio viaggia insieme alla tua posizione GPS. Chiunque si trovi dentro questo raggio da te potrà vederlo e interagire."
+                    : "L'annuncio resta ancorato a questo luogo fisico. Sarà visibile alle persone solo quando passano fisicamente all'interno del suo raggio d'influenza."}
+                </p>
+              </div>
+              <span className={`shrink-0 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs text-white ${
+                trackingType === 'dynamic' ? 'bg-teal-700' : 'bg-amber-600'
+              }`}>
+                {actionRadiusKm === 0 ? 'Illimitato' : actionRadiusKm < 1 ? `${actionRadiusKm * 1000} metri` : `${actionRadiusKm} km`}
+              </span>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-1">
+              {(trackingType === 'dynamic' ? [
+                { value: 1, label: '1 km', desc: 'A piedi' },
+                { value: 3, label: '3 km', desc: 'In bici' },
+                { value: 5, label: '5 km', desc: 'Quartiere' },
+                { value: 10, label: '10 km', desc: 'In auto' },
+                { value: 25, label: '25 km', desc: 'Area metrop.' },
+                { value: 0, label: 'Tutto', desc: 'Senza limiti' },
+              ] : [
+                { value: 0.3, label: '300 m', desc: 'Stesso isolato' },
+                { value: 0.5, label: '500 m', desc: 'Quartiere' },
+                { value: 1, label: '1 km', desc: 'A piedi' },
+                { value: 3, label: '3 km', desc: 'Zona vicina' },
+                { value: 5, label: '5 km', desc: 'Area comune' },
+                { value: 0, label: 'Tutto', desc: 'Senza limiti' },
+              ]).map((preset) => {
+                const isSelected = actionRadiusKm === preset.value;
+                return (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => setActionRadiusKm(preset.value)}
+                    className={`px-2 py-2 rounded-xl text-center border transition-all cursor-pointer ${
+                      isSelected
+                        ? trackingType === 'dynamic'
+                          ? 'bg-teal-700 text-white border-teal-700 font-bold shadow-xs'
+                          : 'bg-amber-600 text-white border-amber-600 font-bold shadow-xs'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 font-medium'
+                    }`}
+                  >
+                    <div className="text-xs font-bold leading-none">{preset.label}</div>
+                    <div className={`text-[9px] mt-0.5 ${
+                      isSelected ? 'text-white/80' : 'text-slate-500'
+                    }`}>
+                      {preset.desc}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className={`flex items-center justify-between text-[11px] pt-1 ${
+              trackingType === 'dynamic' ? 'text-teal-800' : 'text-amber-900'
+            }`}>
+              <span className="flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-current" />
+                <span>
+                  {trackingType === 'dynamic' ? (
+                    <>Centro in movimento: <strong>{user?.location?.address || 'GPS attuale'}</strong></>
+                  ) : (
+                    <>Punto fisso ancorato a: <strong>{staticFormattedAddress || staticComune || 'Indirizzo scelto'}</strong></>
+                  )}
+                </span>
+              </span>
+            </div>
+          </div>
+
           {/* Free vs Credits */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
@@ -287,9 +642,9 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
           <div className="pt-2">
             <button
               type="submit"
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center space-x-2 cursor-pointer"
             >
-              <span>Pubblica Subito</span>
+              <span>Pubblica Annuncio ({trackingType === 'dynamic' ? 'In Movimento' : 'Punto Fisso'})</span>
             </button>
           </div>
 

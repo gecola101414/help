@@ -14,7 +14,8 @@ import {
   Layers,
   Sparkles,
   SlidersHorizontal,
-  Check
+  Check,
+  Radio
 } from 'lucide-react';
 
 interface MapViewProps {
@@ -42,6 +43,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
+  const circlesRef = useRef<L.Circle[]>([]);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const itemMarkersMapRef = useRef<Map<string, L.Marker>>(new Map());
   const hasInitializedViewRef = useRef(false);
@@ -50,10 +52,13 @@ export const MapView: React.FC<MapViewProps> = ({
 
   // Filtering states
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
+  const [filterTracking, setFilterTracking] = useState<'all' | 'dynamic' | 'static'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [markerStyle, setMarkerStyle] = useState<'pill' | 'compact'>('pill');
   const [antiOverlap, setAntiOverlap] = useState<boolean>(true);
+  const [showActionCircles, setShowActionCircles] = useState<boolean>(true);
+  const [onlyInActionRadius, setOnlyInActionRadius] = useState<boolean>(false);
 
   const userLat = user?.location?.lat || 45.4642;
   const userLng = user?.location?.lng || 9.1900;
@@ -75,8 +80,21 @@ export const MapView: React.FC<MapViewProps> = ({
       if (filterType === 'request' && item.type !== 'request') return false;
       if (filterType === 'free' && !item.isFree) return false;
 
+      // Tracking type filter (Dynamic vs Static)
+      if (filterTracking === 'dynamic' && item.trackingType === 'static') return false;
+      if (filterTracking === 'static' && item.trackingType !== 'static') return false;
+
       // Category filter
       if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
+
+      // Creator Action Radius filter (L'annuncio segue chi lo crea o raggio di influenza)
+      if (onlyInActionRadius) {
+        const isCovered =
+          !item.actionRadiusKm ||
+          item.actionRadiusKm === 0 ||
+          (item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm);
+        if (!isCovered) return false;
+      }
 
       // Search keyword filter
       if (searchQuery.trim()) {
@@ -90,7 +108,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       return true;
     });
-  }, [items, filterType, selectedCategory, searchQuery]);
+  }, [items, filterType, filterTracking, selectedCategory, searchQuery, onlyInActionRadius]);
 
   // Compute positioned items with intelligent anti-overlap de-clustering
   const positionedItems: PositionedItem[] = useMemo(() => {
@@ -278,21 +296,47 @@ export const MapView: React.FC<MapViewProps> = ({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    // Remove old item markers
+    // Remove old item markers & circles
     markersRef.current.forEach((marker) => marker.remove());
     markersRef.current = [];
+    circlesRef.current.forEach((circle) => circle.remove());
+    circlesRef.current = [];
     itemMarkersMapRef.current.clear();
 
     // Render positioned items
     positionedItems.forEach(({ item, displayLat, displayLng, isDisplaced }) => {
       const isOffer = item.type === 'offer';
-      const bgColor = isOffer ? '#0d9488' : '#2563eb';
-      const emoji = isOffer ? '🤝' : '🆘';
+      const isStatic = item.trackingType === 'static';
+      
+      // Color and visual identity:
+      // Static: warm amber/orange (#d97706)
+      // Dynamic offer: teal (#0d9488)
+      // Dynamic request: blue (#2563eb)
+      const bgColor = isStatic
+        ? (isOffer ? '#d97706' : '#b45309')
+        : (isOffer ? '#0d9488' : '#2563eb');
+      
+      const emoji = isStatic
+        ? '📌'
+        : (isOffer ? '🤝' : '🆘');
+
+      // Draw Action Radius Circle (L'annuncio segue l'autore in movimento OPPURE resta ancorato al luogo fisso)
+      if (showActionCircles && item.actionRadiusKm && item.actionRadiusKm > 0 && item.location?.lat) {
+        const circle = L.circle([item.location.lat, item.location.lng], {
+          radius: item.actionRadiusKm * 1000,
+          color: bgColor,
+          fillColor: bgColor,
+          fillOpacity: isStatic ? 0.08 : 0.06,
+          weight: isStatic ? 2 : 1.5,
+          dashArray: isStatic ? '4, 4' : '3, 6',
+        }).addTo(map);
+        circlesRef.current.push(circle);
+      }
 
       let customIcon: L.DivIcon;
 
       if (markerStyle === 'compact') {
-        // Compact 30px circular badge (prevents any overlap clutter in dense areas)
+        // Compact circular badge
         customIcon = L.divIcon({
           className: 'custom-help-marker-compact',
           html: `<div style="background-color: ${bgColor}; color: white; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: transform 0.15s ease;" title="${item.title}">
@@ -302,15 +346,15 @@ export const MapView: React.FC<MapViewProps> = ({
           iconAnchor: [16, 16],
         });
       } else {
-        // Full pill marker with title
+        // Full pill marker with title and dynamic/static indicator
         customIcon = L.divIcon({
           className: 'custom-help-marker-pill',
-          html: `<div style="background-color: ${bgColor}; color: white; padding: 5px 9px; border-radius: 14px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.25); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer; max-width: 170px; overflow: hidden; text-overflow: ellipsis;">
+          html: `<div style="background-color: ${bgColor}; color: white; padding: 5px 9px; border-radius: 14px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.25); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer; max-width: 175px; overflow: hidden; text-overflow: ellipsis;">
             <span>${emoji}</span>
             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.title.substring(0, 18)}</span>
           </div>`,
-          iconSize: [130, 32],
-          iconAnchor: [65, 16],
+          iconSize: [135, 32],
+          iconAnchor: [67, 16],
         });
       }
 
@@ -331,14 +375,22 @@ export const MapView: React.FC<MapViewProps> = ({
       const popupContent = document.createElement('div');
       popupContent.style.fontFamily = 'sans-serif';
       popupContent.style.padding = '6px';
-      popupContent.style.minWidth = '220px';
+      popupContent.style.minWidth = '230px';
       popupContent.innerHTML = `
-        <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${isOffer ? '#0d9488' : '#2563eb'}; margin-bottom: 2px;">${isOffer ? '🤝 Offerta di Aiuto' : '🆘 Richiesta di Aiuto'}</div>
+        <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${bgColor}; margin-bottom: 2px;">
+          ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Offerta Dinamica (Segue persona)' : '🏃 Richiesta Dinamica (Segue persona)')}
+        </div>
         <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${item.title}</div>
-        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} • ${item.distanceKm !== undefined ? item.distanceKm + ' km da te' : ''}</div>
+        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} • ${item.distanceKm !== undefined ? (item.distanceKm < 1 ? 'A meno di 1 km' : item.distanceKm + ' km da te') : ''}</div>
+        <div style="font-size: 11px; color: ${isStatic ? '#92400e' : '#0f766e'}; background-color: ${isStatic ? '#fffbeb' : '#f0fdfa'}; border: 1px solid ${isStatic ? '#fde68a' : '#ccfbf1'}; padding: 4px 6px; border-radius: 6px; margin-bottom: 6px;">
+          ${isStatic
+            ? `📌 <strong>Luogo Fisso Ancorato:</strong> Raggio d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km') : 'Illimitato'}</strong>. Visibile solo passando in quest'area.`
+            : `📡 <strong>Segue ${item.userNickname}:</strong> Raggio disponibilità <strong>${item.actionRadiusKm ? item.actionRadiusKm + ' km' : 'Illimitato'}</strong> (si sposta via GPS).`
+          }
+        </div>
         <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
         ${isDisplaced ? '<div style="font-size: 10px; color: #0d9488; background-color: #f0fdf4; padding: 2px 6px; border-radius: 4px; margin-bottom: 8px; display: inline-block;">📍 Posizione distanziata per leggibilità</div>' : ''}
-        <button id="popup-btn-${item.id}" style="background-color: #0f766e; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
+        <button id="popup-btn-${item.id}" style="background-color: ${bgColor}; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
       `;
 
       marker.bindPopup(popupContent);
@@ -370,7 +422,7 @@ export const MapView: React.FC<MapViewProps> = ({
         map.setView([userLat, userLng], 12);
       }
     }
-  }, [positionedItems, markerStyle, onSelectItem]);
+  }, [positionedItems, markerStyle, showActionCircles, onSelectItem]);
 
   // Focus specific item on customer click
   const handleFocusItem = (item: HelpItem) => {
@@ -386,6 +438,8 @@ export const MapView: React.FC<MapViewProps> = ({
   const offersCount = items.filter((i) => i.type === 'offer').length;
   const requestsCount = items.filter((i) => i.type === 'request').length;
   const freeCount = items.filter((i) => i.isFree).length;
+  const dynamicCount = items.filter((i) => i.trackingType !== 'static').length;
+  const staticCount = items.filter((i) => i.trackingType === 'static').length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 animate-in fade-in duration-300">
@@ -396,7 +450,7 @@ export const MapView: React.FC<MapViewProps> = ({
             <span>🗺️</span> Mappa Interattiva di Vicinato
           </h1>
           <p className="text-xs text-gray-500 mt-0.5">
-            Naviga liberamente sulla mappa: usa i filtri sottostanti per mostrare solo ciò che cerchi ed evitare sovrapposizioni.
+            Naviga liberamente sulla mappa: vedi sia annunci dinamici (in movimento con l'autore) sia annunci statici (punti fissi con raggio di influenza).
           </p>
         </div>
         <div className="flex items-center flex-wrap gap-2">
@@ -437,15 +491,15 @@ export const MapView: React.FC<MapViewProps> = ({
       {/* Map Filter Control Bar */}
       <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Filter Type Pills */}
+          {/* Filter Type & Tracking Pills */}
           <div className="flex items-center flex-wrap gap-1.5">
             <span className="text-xs font-bold text-gray-500 mr-1 flex items-center gap-1">
-              <Filter className="w-3.5 h-3.5 text-teal-600" /> Filtra:
+              <Filter className="w-3.5 h-3.5 text-teal-600" /> Modalità:
             </span>
             <button
-              onClick={() => setFilterType('all')}
+              onClick={() => setFilterTracking('all')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filterType === 'all'
+                filterTracking === 'all'
                   ? 'bg-gray-900 text-white shadow-xs'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
@@ -453,33 +507,61 @@ export const MapView: React.FC<MapViewProps> = ({
               Tutti ({items.length})
             </button>
             <button
-              onClick={() => setFilterType('offer')}
+              onClick={() => setFilterTracking('dynamic')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
+                filterTracking === 'dynamic'
+                  ? 'bg-teal-700 text-white shadow-xs'
+                  : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200'
+              }`}
+              title="Annunci che seguono la persona via GPS"
+            >
+              <Radio className="w-3 h-3 text-current animate-pulse" />
+              <span>In Movimento</span>
+              <span className="opacity-80 text-[10px]">({dynamicCount})</span>
+            </button>
+            <button
+              onClick={() => setFilterTracking('static')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
+                filterTracking === 'static'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
+              }`}
+              title="Annunci fissati a un indirizzo con raggio di influenza"
+            >
+              <span>📌 Punti Fissi</span>
+              <span className="opacity-80 text-[10px]">({staticCount})</span>
+            </button>
+
+            <span className="text-gray-300 mx-1">|</span>
+
+            <button
+              onClick={() => setFilterType(filterType === 'offer' ? 'all' : 'offer')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
                 filterType === 'offer'
-                  ? 'bg-teal-600 text-white shadow-xs'
-                  : 'bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-100'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
             >
               <span>🤝 Offerte</span>
               <span className="opacity-80 text-[10px]">({offersCount})</span>
             </button>
             <button
-              onClick={() => setFilterType('request')}
+              onClick={() => setFilterType(filterType === 'request' ? 'all' : 'request')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
                 filterType === 'request'
                   ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-100'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
             >
               <span>🆘 Richieste</span>
               <span className="opacity-80 text-[10px]">({requestsCount})</span>
             </button>
             <button
-              onClick={() => setFilterType('free')}
+              onClick={() => setFilterType(filterType === 'free' ? 'all' : 'free')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
                 filterType === 'free'
                   ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-100'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
               }`}
             >
               <span>🎁 Gratuiti</span>
@@ -535,7 +617,43 @@ export const MapView: React.FC<MapViewProps> = ({
               >
                 {antiOverlap && <Check className="w-2.5 h-2.5" />}
               </div>
-              <span>Separa annunci vicini</span>
+              <span>Separa vicini</span>
+            </button>
+
+            {/* Action Radius Circles Toggle */}
+            <button
+              type="button"
+              onClick={() => setShowActionCircles(!showActionCircles)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                showActionCircles
+                  ? 'bg-teal-50 border-teal-200 text-teal-800 font-bold'
+                  : 'bg-gray-50 border-gray-200 text-gray-500'
+              }`}
+              title="Mostra i cerchi del raggio di disponibilità impostati dagli autori"
+            >
+              <div
+                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] text-white ${
+                  showActionCircles ? 'bg-teal-600' : 'bg-gray-300'
+                }`}
+              >
+                {showActionCircles && <Check className="w-2.5 h-2.5" />}
+              </div>
+              <span>Bolle d'Azione</span>
+            </button>
+
+            {/* Only In Action Radius Toggle */}
+            <button
+              type="button"
+              onClick={() => setOnlyInActionRadius(!onlyInActionRadius)}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                onlyInActionRadius
+                  ? 'bg-teal-700 border-teal-700 text-white font-bold shadow-xs'
+                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+              }`}
+              title="Mostra solo gli annunci la cui sfera di disponibilità copre la tua posizione GPS"
+            >
+              <Radio className={`w-3.5 h-3.5 ${onlyInActionRadius ? 'text-teal-200 animate-pulse' : 'text-gray-400'}`} />
+              <span>{onlyInActionRadius ? '🎯 Coprono dove sono' : '🌐 Tutti gli annunci'}</span>
             </button>
           </div>
         </div>

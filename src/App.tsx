@@ -71,24 +71,48 @@ export default function App() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<HelpItem | null>(null);
 
-  // Real GPS Geolocation on startup
+  // Real GPS Geolocation on startup and manual sync (Announcements follow the creator!)
+  const syncCreatorLocationToAnnouncements = async (userId: string, newLocation: { lat: number; lng: number; address: string }) => {
+    // 1. Update items in local state
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.userId === userId && item.status !== 'completed' && item.status !== 'cancelled') {
+          return { ...item, location: newLocation };
+        }
+        return item;
+      })
+    );
+
+    // 2. Broadcast to server so other devices see the creator's new position immediately
+    try {
+      await fetch(`/api/users/${userId}/location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLocation),
+      });
+    } catch (e) {}
+  };
+
   const handleUpdateLocation = () => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const newLat = position.coords.latitude;
           const newLng = position.coords.longitude;
+          const newLocation = {
+            lat: newLat,
+            lng: newLng,
+            address: `GPS (${newLat.toFixed(3)}, ${newLng.toFixed(3)})`,
+          };
           const updatedUser = {
             ...user!,
-            location: {
-              ...user!.location,
-              lat: newLat,
-              lng: newLng,
-              address: `GPS (${newLat.toFixed(3)}, ${newLng.toFixed(3)})`,
-            },
+            location: newLocation,
           };
           setUser(updatedUser);
           localStorage.setItem('help_user_profile', JSON.stringify(updatedUser));
+          if (user?.id) {
+            syncCreatorLocationToAnnouncements(user.id, newLocation);
+          }
         },
         (error) => {
           console.error('Geolocation error:', error);
@@ -108,10 +132,19 @@ export default function App() {
         (position) => {
           const newLat = position.coords.latitude;
           const newLng = position.coords.longitude;
-          setUser(prev => prev ? {
-            ...prev,
-            location: { ...prev.location, lat: newLat, lng: newLng, address: `GPS (${newLat.toFixed(3)}, ${newLng.toFixed(3)})` }
-          } : prev);
+          const newLocation = {
+            lat: newLat,
+            lng: newLng,
+            address: `GPS (${newLat.toFixed(3)}, ${newLng.toFixed(3)})`,
+          };
+          setUser((prev) => {
+            if (!prev) return prev;
+            syncCreatorLocationToAnnouncements(prev.id, newLocation);
+            return {
+              ...prev,
+              location: newLocation,
+            };
+          });
         },
         () => {},
         { timeout: 5000 }
@@ -273,6 +306,9 @@ export default function App() {
     const newProfile = { ...user, ...updated };
     setUser(newProfile);
     localStorage.setItem('help_user_profile', JSON.stringify(newProfile));
+    if (updated.location && user.id) {
+      syncCreatorLocationToAnnouncements(user.id, updated.location);
+    }
   };
 
   // Create new help item
@@ -283,10 +319,33 @@ export default function App() {
     category: string;
     creditsRequired: number;
     isFree: boolean;
+    trackingType?: 'dynamic' | 'static';
+    actionRadiusKm?: number;
+    staticLocation?: {
+      comune: string;
+      via?: string;
+      civico?: string;
+      formattedAddress: string;
+    };
+    customCoords?: {
+      lat: number;
+      lng: number;
+    };
   }) => {
     if (!user) return;
 
     const newId = 'help-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const trackingType = newHelpData.trackingType || 'dynamic';
+    
+    // Choose location: if static, use customCoords / static formatted address; else user GPS location
+    const itemLocation = (trackingType === 'static' && newHelpData.customCoords)
+      ? {
+          lat: newHelpData.customCoords.lat,
+          lng: newHelpData.customCoords.lng,
+          address: newHelpData.staticLocation?.formattedAddress || [newHelpData.staticLocation?.via, newHelpData.staticLocation?.civico, newHelpData.staticLocation?.comune].filter(Boolean).join(', ') || 'Luogo fisso',
+        }
+      : { ...user.location };
+
     const newItemData = {
       id: newId,
       userId: user.id,
@@ -295,16 +354,23 @@ export default function App() {
       title: newHelpData.title,
       description: newHelpData.description,
       category: newHelpData.category,
-      location: user.location,
+      location: itemLocation,
+      trackingType,
+      staticLocation: newHelpData.staticLocation,
+      actionRadiusKm: newHelpData.actionRadiusKm ?? (trackingType === 'static' ? 1 : 5),
       creditsRequired: newHelpData.creditsRequired,
       isFree: newHelpData.isFree,
       status: 'active' as const,
       createdAt: Date.now(),
     };
 
+    const dist = user
+      ? calculateDistance(user.location.lat, user.location.lng, itemLocation.lat, itemLocation.lng)
+      : 0.1;
+
     const localItem: HelpItem = {
       ...newItemData,
-      distanceKm: 0.1,
+      distanceKm: dist,
     };
 
     // Update locally immediately

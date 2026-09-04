@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { HelpItem, UserProfile, DEFAULT_HELP_CATEGORIES } from '../types';
-import { Search, MapPin, Coins, HeartHandshake, HelpCircle, Filter, Compass, Plus, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Search, MapPin, Coins, HeartHandshake, HelpCircle, Filter, Compass, Plus, Sparkles, CheckCircle2, Radio, Info } from 'lucide-react';
 
 interface HelpFeedProps {
   items: HelpItem[];
@@ -22,20 +22,36 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
   onOpenProfile,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
+  const [filterTracking, setFilterTracking] = useState<'all' | 'dynamic' | 'static'>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  // Novità: vedi solo le cose dove ti trovi (l'annuncio segue l'autore e copre la tua posizione)
+  const [onlyInActionRadius, setOnlyInActionRadius] = useState<boolean>(true);
 
-  // Filter items based on type, category, distance, and search query
+  // Filter items based on type, tracking mode, category, distance, creator's dynamic radius, and search query
   const filteredItems = items.filter((item) => {
     // Type filter
     if (filterType === 'offer' && item.type !== 'offer') return false;
     if (filterType === 'request' && item.type !== 'request') return false;
     if (filterType === 'free' && !item.isFree) return false;
 
+    // Tracking type filter (Dynamic vs Static)
+    if (filterTracking === 'dynamic' && item.trackingType === 'static') return false;
+    if (filterTracking === 'static' && item.trackingType !== 'static') return false;
+
     // Category filter
     if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
 
-    // Distance filter (0 means unlimited / tutta Italia)
+    // Novità fondamentale: L'autore definisce il proprio raggio di interazione e l'annuncio segue la persona
+    if (onlyInActionRadius) {
+      const isCovered =
+        !item.actionRadiusKm ||
+        item.actionRadiusKm === 0 ||
+        (item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm);
+      if (!isCovered) return false;
+    }
+
+    // Secondary client distance filter (if set)
     if (distanceRadius > 0 && item.distanceKm !== undefined && item.distanceKm > distanceRadius) return false;
 
     // Search query
@@ -50,6 +66,14 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
     return true;
   });
+
+  const itemsOutsideActionRadius = items.filter(
+    (item) =>
+      item.actionRadiusKm &&
+      item.actionRadiusKm > 0 &&
+      item.distanceKm !== undefined &&
+      item.distanceKm > item.actionRadiusKm
+  ).length;
 
   const itemsExcludedByDistance = items.filter(
     (item) => distanceRadius > 0 && item.distanceKm !== undefined && item.distanceKm > distanceRadius
@@ -109,11 +133,26 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
           {/* Type Filters & Distance Selector */}
           <div className="flex items-center flex-wrap gap-2">
+            {/* Dynamic Aura Toggle */}
+            <button
+              type="button"
+              onClick={() => setOnlyInActionRadius(!onlyInActionRadius)}
+              className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                onlyInActionRadius
+                  ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
+                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
+              }`}
+              title="L'annuncio segue chi lo ha creato: vedi solo annunci la cui bolla di disponibilità copre dove ti trovi in questo momento"
+            >
+              <Radio className={`w-3.5 h-3.5 ${onlyInActionRadius ? 'text-teal-200 animate-pulse' : 'text-slate-400'}`} />
+              <span>{onlyInActionRadius ? '🎯 Solo annunci che coprono dove sono' : '🌐 Mostra tutti i segnali'}</span>
+            </button>
+
             {/* Distance Selector */}
             {setDistanceRadius && (
               <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs text-slate-700">
                 <Compass className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span className="font-semibold text-slate-500">Raggio:</span>
+                <span className="font-semibold text-slate-500">Raggio max:</span>
                 <select
                   value={distanceRadius}
                   onChange={(e) => setDistanceRadius(Number(e.target.value))}
@@ -131,17 +170,53 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
             )}
 
             <div className="flex items-center space-x-1.5 overflow-x-auto">
+              {/* Tracking Mode Quick Filter */}
+              <div className="flex items-center bg-slate-100 p-0.5 rounded-xl border border-slate-200 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setFilterTracking('all')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    filterTracking === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Tutti
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTracking('dynamic')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
+                    filterTracking === 'dynamic' ? 'bg-teal-700 text-white shadow-xs' : 'text-slate-600 hover:text-teal-800'
+                  }`}
+                  title="Annunci che seguono la persona via GPS"
+                >
+                  <Radio className="w-3 h-3 text-current animate-pulse" />
+                  <span>In Movimento</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterTracking('static')}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
+                    filterTracking === 'static' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-600 hover:text-amber-800'
+                  }`}
+                  title="Annunci ancorati a un luogo fisso"
+                >
+                  <span>📌 Punti Fissi</span>
+                </button>
+              </div>
+
+              <span className="text-slate-300">|</span>
+
               <button
                 onClick={() => setFilterType('all')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   filterType === 'all' ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                Tutti ({items.length})
+                Tutti i Tipi
               </button>
               <button
                 onClick={() => setFilterType('offer')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   filterType === 'offer' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                 }`}
               >
@@ -149,7 +224,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
               </button>
               <button
                 onClick={() => setFilterType('request')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   filterType === 'request' ? 'bg-teal-700 text-white shadow-xs' : 'bg-teal-50 text-teal-800 hover:bg-teal-100'
                 }`}
               >
@@ -157,7 +232,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
               </button>
               <button
                 onClick={() => setFilterType('free')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
                   filterType === 'free' ? 'bg-amber-600 text-white shadow-xs' : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
                 }`}
               >
@@ -167,6 +242,25 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
           </div>
 
         </div>
+
+        {/* Informative Banner about the Dynamic Persona-Centric model */}
+        {onlyInActionRadius && itemsOutsideActionRadius > 0 && (
+          <div className="bg-teal-50/90 border border-teal-200/80 rounded-xl p-3 text-xs text-teal-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
+              <Radio className="w-4 h-4 text-teal-600 shrink-0 animate-pulse" />
+              <span>
+                <strong>{filteredItems.length} annunci attivi</strong> coprono la tua posizione in tempo reale. Ci sono altri <strong>{itemsOutsideActionRadius} annunci</strong> il cui autore ha definito un raggio diverso da dove ti trovi.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setOnlyInActionRadius(false)}
+              className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-3 py-1.5 rounded-lg text-xs transition-all self-start sm:self-auto cursor-pointer"
+            >
+              Mostra anche quelli fuori raggio
+            </button>
+          </div>
+        )}
 
         {/* Banner if items are excluded by distance */}
         {itemsExcludedByDistance > 0 && (
@@ -277,13 +371,54 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
                   {/* Title & Description */}
                   <div>
-                    <span className="text-[11px] text-emerald-700 font-bold block mb-1">{item.category}</span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] text-emerald-700 font-bold block">{item.category}</span>
+                      <span className="text-[10px] text-slate-400 font-medium">da {item.userNickname}</span>
+                    </div>
                     <h3 className="text-base font-bold text-slate-900 group-hover:text-emerald-700 transition-colors line-clamp-1">
                       {item.title}
                     </h3>
                     <p className="text-xs text-slate-600 line-clamp-2 mt-1.5 leading-relaxed">
                       {item.description}
                     </p>
+                  </div>
+
+                  {/* Tracking Type & Action Radius Badge (Statico ancorato al luogo vs Dinamico legato alla persona) */}
+                  <div className="pt-1">
+                    {item.trackingType === 'static' ? (
+                      <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
+                        !item.actionRadiusKm || item.actionRadiusKm === 0
+                          ? 'bg-amber-50 text-amber-900 border-amber-200'
+                          : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
+                          ? 'bg-amber-100 text-amber-950 border-amber-300 font-bold'
+                          : 'bg-slate-50 text-slate-700 border-slate-200'
+                      }`}>
+                        <span className="shrink-0 text-amber-700 font-bold">📌</span>
+                        <span>
+                          Punto Fisso: <strong>{item.staticLocation?.comune || 'Luogo fisso'}</strong>
+                          {item.actionRadiusKm && item.actionRadiusKm > 0
+                            ? ` • Influenza: ${item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km'}`
+                            : ' • Raggio libero'}
+                          {item.distanceKm !== undefined && item.actionRadiusKm && item.distanceKm <= item.actionRadiusKm ? ' (Sei nel raggio!)' : ''}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
+                        !item.actionRadiusKm || item.actionRadiusKm === 0
+                          ? 'bg-slate-50 text-slate-700 border-slate-200'
+                          : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
+                          ? 'bg-teal-50 text-teal-800 border-teal-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}>
+                        <Radio className="w-2.5 h-2.5 text-teal-600 shrink-0 animate-pulse" />
+                        <span>
+                          {item.actionRadiusKm && item.actionRadiusKm > 0
+                            ? `In movimento: ${item.actionRadiusKm} km (segue ${item.userNickname})`
+                            : `Senza limiti (segue ${item.userNickname})`}
+                          {item.distanceKm !== undefined && item.actionRadiusKm && item.distanceKm <= item.actionRadiusKm ? ' (Sei nel raggio!)' : ''}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                 </div>

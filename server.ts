@@ -170,6 +170,135 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Dynamic Aura: When a creator moves, their active DYNAMIC announcements follow them!
+  // Static announcements stay firmly anchored at their chosen place/address!
+  app.post("/api/users/:userId/location", (req, res) => {
+    const { userId } = req.params;
+    const { lat, lng, address } = req.body;
+    if (typeof lat !== "number" || typeof lng !== "number") {
+      return res.status(400).json({ error: "lat and lng required" });
+    }
+
+    const items = getStoredItems();
+    let updatedCount = 0;
+
+    for (let i = 0; i < items.length; i++) {
+      // ONLY update dynamic announcements; static items remain at their fixed address!
+      if (
+        items[i].userId === userId &&
+        items[i].trackingType !== 'static' &&
+        items[i].status !== 'completed' &&
+        items[i].status !== 'cancelled'
+      ) {
+        items[i].location = {
+          lat,
+          lng,
+          address: address || items[i].location?.address || `GPS (${lat.toFixed(3)}, ${lng.toFixed(3)})`
+        };
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      saveStoredItems(items);
+      broadcastItemsUpdate(items);
+    }
+
+    res.json({ success: true, updatedCount });
+  });
+
+  // Geocoding helper for static announcements (Comune, Via, Numero Civico)
+  const ITALIAN_CITIES_FALLBACK: Record<string, { lat: number; lng: number }> = {
+    roma: { lat: 41.9028, lng: 12.4964 },
+    milano: { lat: 45.4642, lng: 9.1900 },
+    napoli: { lat: 40.8518, lng: 14.2681 },
+    torino: { lat: 45.0703, lng: 7.6869 },
+    palermo: { lat: 38.1157, lng: 13.3615 },
+    genova: { lat: 44.4056, lng: 8.9463 },
+    bologna: { lat: 44.4949, lng: 11.3426 },
+    firenze: { lat: 43.7696, lng: 11.2558 },
+    bari: { lat: 41.1171, lng: 16.8719 },
+    catania: { lat: 37.5079, lng: 15.0830 },
+    verona: { lat: 45.4384, lng: 10.9916 },
+    venezia: { lat: 45.4408, lng: 12.3155 },
+    padova: { lat: 45.4064, lng: 11.8768 },
+    trieste: { lat: 45.6495, lng: 13.7768 },
+    brescia: { lat: 45.5416, lng: 10.2118 },
+    parma: { lat: 44.8015, lng: 10.3279 },
+    savona: { lat: 44.3080, lng: 8.4810 },
+    bergamo: { lat: 45.6983, lng: 9.6773 },
+    trento: { lat: 46.0748, lng: 11.1217 },
+    bolzano: { lat: 46.4983, lng: 11.3548 },
+    ancona: { lat: 43.6158, lng: 13.5189 },
+    perugia: { lat: 43.1107, lng: 12.3908 },
+    cagliari: { lat: 39.2238, lng: 9.1217 },
+    pescara: { lat: 42.4618, lng: 14.2144 },
+    salerno: { lat: 40.6824, lng: 14.7681 },
+    rimini: { lat: 44.0678, lng: 12.5695 },
+    monza: { lat: 45.5845, lng: 9.2744 },
+    lecce: { lat: 40.3515, lng: 18.1750 },
+  };
+
+  app.get("/api/geocode", async (req, res) => {
+    const q = (req.query.q as string || "").trim();
+    if (!q) {
+      return res.status(400).json({ error: "Missing query parameter 'q'" });
+    }
+
+    try {
+      // Try Nominatim with custom user agent and timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q + ", Italia")}&format=json&limit=1&addressdetails=1`;
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "HelpCommunityPlatform/1.0",
+          "Accept-Language": "it",
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data: any = await response.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const first = data[0];
+          return res.json({
+            lat: parseFloat(first.lat),
+            lng: parseFloat(first.lon),
+            displayName: first.display_name,
+            found: true,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("Nominatim geocoding error or timeout, checking fallback...", err);
+    }
+
+    // Fallback: Check if city is in fallback dictionary
+    const queryNormalized = q.toLowerCase();
+    for (const [cityName, coords] of Object.entries(ITALIAN_CITIES_FALLBACK)) {
+      if (queryNormalized.includes(cityName)) {
+        return res.json({
+          lat: coords.lat,
+          lng: coords.lng,
+          displayName: `${q}, Italia`,
+          found: true,
+          isFallback: true,
+        });
+      }
+    }
+
+    // Default fallback: Center of Italy
+    res.json({
+      lat: 42.5042,
+      lng: 12.5736,
+      displayName: q,
+      found: false,
+    });
+  });
+
   // Chat messages API
   const MESSAGES_FILE = path.join(DATA_DIR, "help_messages.json");
   function getStoredMessages(): any[] {

@@ -31,6 +31,14 @@ export interface HelpItem {
     address: string;
   };
   distanceKm?: number;
+  trackingType?: 'dynamic' | 'static'; // 'dynamic' (segue la persona via GPS) oppure 'static' (fissato a un luogo/comune/via)
+  staticLocation?: {
+    comune: string;
+    via?: string;
+    civico?: string;
+    formattedAddress: string;
+  };
+  actionRadiusKm?: number; // Raggio d'azione/influenza (entro cui bisogna passare/trovarsi per visualizzarlo)
   creditsRequired: number; // 0 for free, >0 if needs credits
   isFree: boolean;
   status: 'active' | 'in_progress' | 'completed' | 'cancelled';

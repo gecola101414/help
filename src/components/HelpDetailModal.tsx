@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, ShieldCheck, MessageSquare } from 'lucide-react';
+import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, ShieldCheck, MessageSquare, Radio } from 'lucide-react';
 import { HelpItem, UserProfile, ChatMessage } from '../types';
 import { db } from '../lib/firebase';
 import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc, getDoc } from 'firebase/firestore';
@@ -185,6 +185,88 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Announcement Spatial Presence Banner (Statico ancorato al luogo vs Dinamico legato alla persona) */}
+          {item.trackingType === 'static' ? (
+            <div className={`p-4 rounded-xl border flex items-start space-x-3 text-xs ${
+              !item.actionRadiusKm || item.actionRadiusKm === 0
+                ? 'bg-amber-50/70 border-amber-200 text-amber-950'
+                : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
+                ? 'bg-amber-100/80 border-amber-300 text-amber-950'
+                : 'bg-slate-50 border-slate-200 text-slate-700'
+            }`}>
+              <div className="p-1.5 bg-amber-200/80 text-amber-900 rounded-lg shrink-0 mt-0.5">
+                <MapPin className="w-4 h-4" />
+              </div>
+              <div className="space-y-1">
+                <div className="font-bold flex items-center space-x-1.5 text-amber-900">
+                  <span>📌 Annuncio Statico (Punto Fisso nel Territorio):</span>
+                  <span className="underline">
+                    {item.actionRadiusKm && item.actionRadiusKm > 0
+                      ? `Raggio d'influenza: ${item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km'}`
+                      : 'Nessun limite di distanza'}
+                  </span>
+                </div>
+                <div className="text-[11px] text-amber-800 font-medium">
+                  Luogo: <strong>{item.staticLocation?.comune || ''}</strong> {item.staticLocation?.via ? `• ${item.staticLocation.via}` : ''} {item.staticLocation?.civico ? `n. ${item.staticLocation.civico}` : ''}
+                </div>
+                <p className="text-[11px] opacity-90 leading-relaxed text-slate-700">
+                  {item.actionRadiusKm && item.actionRadiusKm > 0 ? (
+                    item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm ? (
+                      <>
+                        🎯 <strong>Sei dentro la sfera d'influenza del luogo!</strong> Ti trovi a <strong>{item.distanceKm < 1 ? 'meno di 1 km' : `${item.distanceKm} km`}</strong> da questo punto fisso. Questo incentiva le interazioni delle persone realmente presenti sul posto.
+                      </>
+                    ) : (
+                      <>
+                        📍 Questo annuncio è ancorato a queste coordinate fisse con una sfera d'influenza di <strong>{item.actionRadiusKm} km</strong> (attualmente ti trovi a {item.distanceKm || '?'} km). Gli annunci statici si vedono e si attivano solo quando passi fisicamente nel loro raggio d'influenza.
+                      </>
+                    )
+                  ) : (
+                    <>
+                      🌐 Questo annuncio è localizzato in un luogo fisso e visibile senza restrizioni di raggio d'azione.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className={`p-4 rounded-xl border flex items-start space-x-3 text-xs ${
+              !item.actionRadiusKm || item.actionRadiusKm === 0
+                ? 'bg-slate-50 border-slate-200 text-slate-700'
+                : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
+                ? 'bg-teal-50 border-teal-200 text-teal-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}>
+              <Radio className="w-4 h-4 text-teal-600 shrink-0 mt-0.5 animate-pulse" />
+              <div className="space-y-1">
+                <div className="font-bold flex items-center space-x-1.5">
+                  <span>🏃 Annuncio Dinamico (Segue l'autore):</span>
+                  <span className="underline">
+                    {item.actionRadiusKm && item.actionRadiusKm > 0
+                      ? `${item.actionRadiusKm} km di disponibilità`
+                      : 'Copertura senza limiti di distanza'}
+                  </span>
+                </div>
+                <p className="text-[11px] opacity-90 leading-relaxed">
+                  {item.actionRadiusKm && item.actionRadiusKm > 0 ? (
+                    item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm ? (
+                      <>
+                        🎯 <strong>Sei dentro il raggio d'interazione!</strong> Questo annuncio segue <strong>{item.userNickname}</strong> in tempo reale mentre si sposta via GPS. Sei a {item.distanceKm < 1 ? 'meno di 1' : item.distanceKm} km, quindi siete vicini per interagire.
+                      </>
+                    ) : (
+                      <>
+                        📍 L'autore ha scelto un raggio di <strong>{item.actionRadiusKm} km</strong> attorno a sé, mentre attualmente ti trovi a <strong>{item.distanceKm || '?'} km</strong>. L'annuncio si sposterà insieme a lui se si avvicina alla tua zona.
+                      </>
+                    )
+                  ) : (
+                    <>
+                      🌐 <strong>{item.userNickname}</strong> ha scelto di rendersi disponibile senza vincoli chilometrici, ovunque si trovi.
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Status & Actions Box */}
           <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
