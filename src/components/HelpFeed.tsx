@@ -42,12 +42,13 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
     // Category filter
     if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
 
-    // Novità fondamentale: L'autore definisce il proprio raggio di interazione e l'annuncio segue la persona
+    // Novità fondamentale: Raggio di influenza (100m fissi dinamici per interazione umana, 0-10km per statici)
     if (onlyInActionRadius) {
-      const isCovered =
-        !item.actionRadiusKm ||
-        item.actionRadiusKm === 0 ||
-        (item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm);
+      const isStatic = item.trackingType === 'static';
+      const effectiveRadius = isStatic
+        ? Math.min(10, Math.max(0.1, item.actionRadiusKm || 1))
+        : 0.1; // 100 metri fissa per annunci dinamici
+      const isCovered = item.distanceKm !== undefined && item.distanceKm <= effectiveRadius;
       if (!isCovered) return false;
     }
 
@@ -67,13 +68,13 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
     return true;
   });
 
-  const itemsOutsideActionRadius = items.filter(
-    (item) =>
-      item.actionRadiusKm &&
-      item.actionRadiusKm > 0 &&
-      item.distanceKm !== undefined &&
-      item.distanceKm > item.actionRadiusKm
-  ).length;
+  const itemsOutsideActionRadius = items.filter((item) => {
+    const isStatic = item.trackingType === 'static';
+    const effectiveRadius = isStatic
+      ? Math.min(10, Math.max(0.1, item.actionRadiusKm || 1))
+      : 0.1;
+    return item.distanceKm !== undefined && item.distanceKm > effectiveRadius;
+  }).length;
 
   const itemsExcludedByDistance = items.filter(
     (item) => distanceRadius > 0 && item.distanceKm !== undefined && item.distanceKm > distanceRadius
@@ -133,7 +134,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
           {/* Type Filters & Distance Selector */}
           <div className="flex items-center flex-wrap gap-2">
-            {/* Dynamic Aura Toggle */}
+            {/* Dynamic Proximity Toggle */}
             <button
               type="button"
               onClick={() => setOnlyInActionRadius(!onlyInActionRadius)}
@@ -142,10 +143,10 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
                   ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
                   : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
               }`}
-              title="L'annuncio segue chi lo ha creato: vedi solo annunci la cui bolla di disponibilità copre dove ti trovi in questo momento"
+              title="Vedi solo gli annunci che coprono la tua posizione attuale (100 metri per quelli dinamici, max 10 km per quelli statici)"
             >
               <Radio className={`w-3.5 h-3.5 ${onlyInActionRadius ? 'text-teal-200 animate-pulse' : 'text-slate-400'}`} />
-              <span>{onlyInActionRadius ? '🎯 Solo annunci che coprono dove sono' : '🌐 Mostra tutti i segnali'}</span>
+              <span>{onlyInActionRadius ? '🎯 Solo nel raggio di vicinanza' : '🌐 Mostra tutti gli annunci'}</span>
             </button>
 
             {/* Distance Selector */}
@@ -360,11 +361,13 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
                       {isOffer ? <HeartHandshake className="w-3 h-3 mr-1" /> : <HelpCircle className="w-3 h-3 mr-1" />}
                       <span>{isOffer ? 'Offre Aiuto' : 'Cerca Aiuto'}</span>
                     </span>
-                    <span className="text-xs text-slate-400 font-medium">
+                    <span className="text-xs text-slate-500 font-bold">
                       {item.distanceKm !== undefined
-                        ? item.distanceKm < 1
-                          ? 'A meno di 1 km'
-                          : `${item.distanceKm} km da te`
+                        ? item.distanceKm < 0.1
+                          ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
+                          : item.distanceKm < 1
+                          ? `${Math.round(item.distanceKm * 1000)} m da te`
+                          : `${item.distanceKm.toFixed(1)} km da te`
                         : 'Vicinanze'}
                     </span>
                   </div>
@@ -383,41 +386,44 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
                     </p>
                   </div>
 
-                  {/* Tracking Type & Action Radius Badge (Statico ancorato al luogo vs Dinamico legato alla persona) */}
+                  {/* Tracking Type & Action Radius Badge (Statico 0-10km vs Dinamico 100m fisso) */}
                   <div className="pt-1">
                     {item.trackingType === 'static' ? (
-                      <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
-                        !item.actionRadiusKm || item.actionRadiusKm === 0
-                          ? 'bg-amber-50 text-amber-900 border-amber-200'
-                          : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
-                          ? 'bg-amber-100 text-amber-950 border-amber-300 font-bold'
-                          : 'bg-slate-50 text-slate-700 border-slate-200'
-                      }`}>
-                        <span className="shrink-0 text-amber-700 font-bold">📌</span>
-                        <span>
-                          Punto Fisso: <strong>{item.staticLocation?.comune || 'Luogo fisso'}</strong>
-                          {item.actionRadiusKm && item.actionRadiusKm > 0
-                            ? ` • Influenza: ${item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km'}`
-                            : ' • Raggio libero'}
-                          {item.distanceKm !== undefined && item.actionRadiusKm && item.distanceKm <= item.actionRadiusKm ? ' (Sei nel raggio!)' : ''}
-                        </span>
-                      </div>
+                      (() => {
+                        const staticRadius = Math.min(10, Math.max(0.1, item.actionRadiusKm || 1));
+                        const isCovered = item.distanceKm !== undefined && item.distanceKm <= staticRadius;
+                        return (
+                          <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
+                            isCovered
+                              ? 'bg-amber-100 text-amber-950 border-amber-300 font-bold'
+                              : 'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            <span className="shrink-0 text-amber-700 font-bold">📌</span>
+                            <span>
+                              Punto Fisso: <strong>{item.staticLocation?.comune || 'Luogo fisso'}</strong>
+                              {` • Influenza: ${staticRadius < 1 ? Math.round(staticRadius * 1000) + ' m' : staticRadius + ' km'}`}
+                              {isCovered ? ' (🎯 Sei nel raggio!)' : ''}
+                            </span>
+                          </div>
+                        );
+                      })()
                     ) : (
-                      <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
-                        !item.actionRadiusKm || item.actionRadiusKm === 0
-                          ? 'bg-slate-50 text-slate-700 border-slate-200'
-                          : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
-                          ? 'bg-teal-50 text-teal-800 border-teal-200'
-                          : 'bg-amber-50 text-amber-800 border-amber-200'
-                      }`}>
-                        <Radio className="w-2.5 h-2.5 text-teal-600 shrink-0 animate-pulse" />
-                        <span>
-                          {item.actionRadiusKm && item.actionRadiusKm > 0
-                            ? `In movimento: ${item.actionRadiusKm} km (segue ${item.userNickname})`
-                            : `Senza limiti (segue ${item.userNickname})`}
-                          {item.distanceKm !== undefined && item.actionRadiusKm && item.distanceKm <= item.actionRadiusKm ? ' (Sei nel raggio!)' : ''}
-                        </span>
-                      </div>
+                      (() => {
+                        const isCovered = item.distanceKm !== undefined && item.distanceKm <= 0.1;
+                        return (
+                          <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold border ${
+                            isCovered
+                              ? 'bg-teal-100 text-teal-950 border-teal-300 font-bold'
+                              : 'bg-teal-50/60 text-teal-800 border-teal-200'
+                          }`}>
+                            <Radio className="w-2.5 h-2.5 text-teal-600 shrink-0 animate-pulse" />
+                            <span>
+                              In movimento: <strong>100m fissi</strong> (segue {item.userNickname})
+                              {isCovered ? ' (🎯 Entro 100m - Vicino ora!)' : ''}
+                            </span>
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
 

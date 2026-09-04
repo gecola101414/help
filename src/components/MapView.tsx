@@ -87,12 +87,13 @@ export const MapView: React.FC<MapViewProps> = ({
       // Category filter
       if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
 
-      // Creator Action Radius filter (L'annuncio segue chi lo crea o raggio di influenza)
+      // Creator Action Radius filter (100m fissi per annunci dinamici, 0-10km per punti fissi)
       if (onlyInActionRadius) {
-        const isCovered =
-          !item.actionRadiusKm ||
-          item.actionRadiusKm === 0 ||
-          (item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm);
+        const isStatic = item.trackingType === 'static';
+        const effectiveRadius = isStatic
+          ? Math.min(10, Math.max(0.1, item.actionRadiusKm || 1))
+          : 0.1; // 100 metri fissa per annunci dinamici
+        const isCovered = item.distanceKm !== undefined && item.distanceKm <= effectiveRadius;
         if (!isCovered) return false;
       }
 
@@ -320,15 +321,19 @@ export const MapView: React.FC<MapViewProps> = ({
         ? '📌'
         : (isOffer ? '🤝' : '🆘');
 
-      // Draw Action Radius Circle (L'annuncio segue l'autore in movimento OPPURE resta ancorato al luogo fisso)
-      if (showActionCircles && item.actionRadiusKm && item.actionRadiusKm > 0 && item.location?.lat) {
+      // Draw Action Radius Circle (100 metri fissi per dinamici, fino a 10 km per statici)
+      if (showActionCircles && item.location?.lat) {
+        const radiusMeters = isStatic
+          ? Math.min(10000, Math.max(100, (item.actionRadiusKm || 1) * 1000))
+          : 100; // 100 metri fissi per incentivare l'interazione umana diretta
+
         const circle = L.circle([item.location.lat, item.location.lng], {
-          radius: item.actionRadiusKm * 1000,
+          radius: radiusMeters,
           color: bgColor,
           fillColor: bgColor,
-          fillOpacity: isStatic ? 0.08 : 0.06,
-          weight: isStatic ? 2 : 1.5,
-          dashArray: isStatic ? '4, 4' : '3, 6',
+          fillOpacity: isStatic ? 0.08 : 0.16,
+          weight: isStatic ? 2 : 2.5,
+          dashArray: isStatic ? '4, 4' : undefined,
         }).addTo(map);
         circlesRef.current.push(circle);
       }
@@ -372,6 +377,14 @@ export const MapView: React.FC<MapViewProps> = ({
         onSelectItem(item);
       });
 
+      const distText = item.distanceKm !== undefined
+        ? item.distanceKm < 0.1
+          ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
+          : item.distanceKm < 1
+          ? `${Math.round(item.distanceKm * 1000)} m da te`
+          : `${item.distanceKm.toFixed(1)} km da te`
+        : '';
+
       const popupContent = document.createElement('div');
       popupContent.style.fontFamily = 'sans-serif';
       popupContent.style.padding = '6px';
@@ -381,11 +394,11 @@ export const MapView: React.FC<MapViewProps> = ({
           ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Offerta Dinamica (Segue persona)' : '🏃 Richiesta Dinamica (Segue persona)')}
         </div>
         <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${item.title}</div>
-        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} • ${item.distanceKm !== undefined ? (item.distanceKm < 1 ? 'A meno di 1 km' : item.distanceKm + ' km da te') : ''}</div>
-        <div style="font-size: 11px; color: ${isStatic ? '#92400e' : '#0f766e'}; background-color: ${isStatic ? '#fffbeb' : '#f0fdfa'}; border: 1px solid ${isStatic ? '#fde68a' : '#ccfbf1'}; padding: 4px 6px; border-radius: 6px; margin-bottom: 6px;">
+        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} ${distText ? `• <strong>${distText}</strong>` : ''}</div>
+        <div style="font-size: 11px; color: ${isStatic ? '#92400e' : '#0f766e'}; background-color: ${isStatic ? '#fffbeb' : '#f0fdfa'}; border: 1px solid ${isStatic ? '#fde68a' : '#ccfbf1'}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4;">
           ${isStatic
-            ? `📌 <strong>Luogo Fisso Ancorato:</strong> Raggio d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km') : 'Illimitato'}</strong>. Visibile solo passando in quest'area.`
-            : `📡 <strong>Segue ${item.userNickname}:</strong> Raggio disponibilità <strong>${item.actionRadiusKm ? item.actionRadiusKm + ' km' : 'Illimitato'}</strong> (si sposta via GPS).`
+            ? `📌 <strong>Punto Fisso:</strong> Area d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (Math.round(item.actionRadiusKm * 1000)) + ' m' : item.actionRadiusKm + ' km') : '1 km'}</strong> (max 10 km). Visibile solo passando sul posto.`
+            : `🏃 <strong>Dinamico (Segue ${item.userNickname}):</strong> Distanza fissa <strong>100 metri</strong> per stimolare l'interazione umana diretta.`
           }
         </div>
         <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
@@ -808,6 +821,14 @@ export const MapView: React.FC<MapViewProps> = ({
           <div className="flex items-center space-x-2">
             <span className="w-3 h-3 rounded-full bg-blue-600 inline-block"></span>
             <span className="text-gray-700">Richieste ({positionedItems.filter((p) => p.item.type === 'request').length})</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs">📌</span>
+            <span className="text-amber-800 font-medium">Punti Fissi (Area 0-10 km)</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs">🏃</span>
+            <span className="text-teal-800 font-medium">Dinamici (100m fissi GPS)</span>
           </div>
           <div className="flex items-center space-x-2">
             <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block"></span>

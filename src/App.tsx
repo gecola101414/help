@@ -12,7 +12,7 @@ import { CommunityWall } from './components/CommunityWall';
 import { AiHelpAssistant } from './components/AiHelpAssistant';
 import { MapView } from './components/MapView';
 
-// Helper function to calculate distance in km using Haversine formula
+// Helper function to calculate distance in km using Haversine formula (precision down to 1 meter)
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 1.5; // default fallback distance
   const R = 6371; // Radius of the earth in km
@@ -24,7 +24,7 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const d = R * c; // Distance in km
-  return Math.round(d * 10) / 10;
+  return Math.round(d * 1000) / 1000; // 3 decimal places = precision to 1 meter
 }
 
 function deg2rad(deg: number): number {
@@ -152,15 +152,25 @@ export default function App() {
     }
   }, []);
 
-  // Helper to attach distance to items and discard legacy mock items
+  // Helper to attach distance to items, enforce proximity constraints, and discard legacy mock items
   const enrichItemsWithDistance = (itemList: HelpItem[], currentUser: UserProfile | null) => {
     return itemList
       .filter((item) => item && !item.id?.startsWith('init-'))
       .map((item) => {
-        const dist = currentUser?.location?.lat
-          ? Number(calculateDistance(currentUser.location.lat, currentUser.location.lng, item.location.lat, item.location.lng).toFixed(1))
-          : (item.distanceKm || 1.0);
-        return { ...item, distanceKm: dist };
+        const rawDist = currentUser?.location?.lat
+          ? calculateDistance(currentUser.location.lat, currentUser.location.lng, item.location.lat, item.location.lng)
+          : (item.distanceKm || 0.1);
+        const dist = Number(rawDist.toFixed(3));
+        
+        // Enforce proximity rules:
+        // Dynamic: exactly 100 meters (0.1 km) fixed
+        // Static: between 0.1 and 10 km (max 10 km)
+        const isStatic = item.trackingType === 'static';
+        const actionRadiusKm = isStatic
+          ? Math.min(10, Math.max(0.1, Number(item.actionRadiusKm) || 1))
+          : 0.1;
+
+        return { ...item, distanceKm: dist, actionRadiusKm };
       });
   };
 
@@ -346,6 +356,13 @@ export default function App() {
         }
       : { ...user.location };
 
+    // Proximity rule:
+    // Dynamic: exactly 100 meters (0.1 km) fixed for human interaction
+    // Static: between 0.1 and 10 km (max 10 km)
+    const effectiveRadius = trackingType === 'static'
+      ? Math.min(10, Math.max(0.1, Number(newHelpData.actionRadiusKm) || 1))
+      : 0.1;
+
     const newItemData = {
       id: newId,
       userId: user.id,
@@ -357,7 +374,7 @@ export default function App() {
       location: itemLocation,
       trackingType,
       staticLocation: newHelpData.staticLocation,
-      actionRadiusKm: newHelpData.actionRadiusKm ?? (trackingType === 'static' ? 1 : 5),
+      actionRadiusKm: effectiveRadius,
       creditsRequired: newHelpData.creditsRequired,
       isFree: newHelpData.isFree,
       status: 'active' as const,

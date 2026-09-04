@@ -188,81 +188,75 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
           {/* Announcement Spatial Presence Banner (Statico ancorato al luogo vs Dinamico legato alla persona) */}
           {item.trackingType === 'static' ? (
-            <div className={`p-4 rounded-xl border flex items-start space-x-3 text-xs ${
-              !item.actionRadiusKm || item.actionRadiusKm === 0
-                ? 'bg-amber-50/70 border-amber-200 text-amber-950'
-                : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
-                ? 'bg-amber-100/80 border-amber-300 text-amber-950'
-                : 'bg-slate-50 border-slate-200 text-slate-700'
-            }`}>
-              <div className="p-1.5 bg-amber-200/80 text-amber-900 rounded-lg shrink-0 mt-0.5">
-                <MapPin className="w-4 h-4" />
+            <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex items-start space-x-3 text-xs">
+              <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center font-bold text-sm shrink-0 mt-0.5 shadow-xs">
+                📌
               </div>
-              <div className="space-y-1">
-                <div className="font-bold flex items-center space-x-1.5 text-amber-900">
-                  <span>📌 Annuncio Statico (Punto Fisso nel Territorio):</span>
-                  <span className="underline">
-                    {item.actionRadiusKm && item.actionRadiusKm > 0
-                      ? `Raggio d'influenza: ${item.actionRadiusKm < 1 ? (item.actionRadiusKm * 1000) + ' m' : item.actionRadiusKm + ' km'}`
-                      : 'Nessun limite di distanza'}
+              <div className="space-y-1 w-full">
+                <div className="font-bold flex items-center justify-between text-amber-950">
+                  <span>Annuncio Statico (Punto Fisso nel Territorio)</span>
+                  <span className="bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
+                    Max 10 km consentiti
                   </span>
                 </div>
-                <div className="text-[11px] text-amber-800 font-medium">
-                  Luogo: <strong>{item.staticLocation?.comune || ''}</strong> {item.staticLocation?.via ? `• ${item.staticLocation.via}` : ''} {item.staticLocation?.civico ? `n. ${item.staticLocation.civico}` : ''}
+                <div className="text-xs text-amber-900 font-semibold">
+                  Sfera d'influenza impostata: <u>{item.actionRadiusKm && item.actionRadiusKm < 1 ? `${Math.round(item.actionRadiusKm * 1000)} metri` : `${item.actionRadiusKm || 1} km`}</u>
                 </div>
-                <p className="text-[11px] opacity-90 leading-relaxed text-slate-700">
-                  {item.actionRadiusKm && item.actionRadiusKm > 0 ? (
-                    item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm ? (
+                <div className="text-[11px] text-amber-800 font-medium">
+                  Indirizzo ancorato: <strong>{item.staticLocation?.comune || ''}</strong> {item.staticLocation?.via ? `• ${item.staticLocation.via}` : ''} {item.staticLocation?.civico ? `n. ${item.staticLocation.civico}` : ''}
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-700 pt-0.5">
+                  {(() => {
+                    const staticRadius = Math.min(10, Math.max(0.1, item.actionRadiusKm || 1));
+                    const isInside = item.distanceKm !== undefined && item.distanceKm <= staticRadius;
+                    const distStr = item.distanceKm !== undefined
+                      ? item.distanceKm < 1 ? `${Math.round(item.distanceKm * 1000)} metri` : `${item.distanceKm.toFixed(1)} km`
+                      : '? km';
+                    return isInside ? (
                       <>
-                        🎯 <strong>Sei dentro la sfera d'influenza del luogo!</strong> Ti trovi a <strong>{item.distanceKm < 1 ? 'meno di 1 km' : `${item.distanceKm} km`}</strong> da questo punto fisso. Questo incentiva le interazioni delle persone realmente presenti sul posto.
+                        🎯 <strong>Sei dentro la sfera d'influenza del luogo!</strong> Ti trovi a soli <strong>{distStr}</strong> da questo punto fisso (raggio massimo di {staticRadius < 1 ? Math.round(staticRadius * 1000) + ' m' : staticRadius + ' km'}). Sei sul posto ed è possibile un'interazione reale!
                       </>
                     ) : (
                       <>
-                        📍 Questo annuncio è ancorato a queste coordinate fisse con una sfera d'influenza di <strong>{item.actionRadiusKm} km</strong> (attualmente ti trovi a {item.distanceKm || '?'} km). Gli annunci statici si vedono e si attivano solo quando passi fisicamente nel loro raggio d'influenza.
+                        📍 Questo annuncio è ancorato a queste coordinate con un raggio scelto di <strong>{staticRadius < 1 ? Math.round(staticRadius * 1000) + ' m' : staticRadius + ' km'}</strong> (attualmente ti trovi a {distStr}). Gli annunci statici si vedono e si attivano solo quando passi fisicamente all'interno della loro area.
                       </>
-                    )
-                  ) : (
-                    <>
-                      🌐 Questo annuncio è localizzato in un luogo fisso e visibile senza restrizioni di raggio d'azione.
-                    </>
-                  )}
+                    );
+                  })()}
                 </p>
               </div>
             </div>
           ) : (
             <div className={`p-4 rounded-xl border flex items-start space-x-3 text-xs ${
-              !item.actionRadiusKm || item.actionRadiusKm === 0
-                ? 'bg-slate-50 border-slate-200 text-slate-700'
-                : item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm
-                ? 'bg-teal-50 border-teal-200 text-teal-900'
-                : 'bg-amber-50 border-amber-200 text-amber-900'
+              item.distanceKm !== undefined && item.distanceKm <= 0.1
+                ? 'bg-teal-50 border-teal-300 text-teal-950'
+                : 'bg-teal-50/60 border-teal-200 text-teal-900'
             }`}>
-              <Radio className="w-4 h-4 text-teal-600 shrink-0 mt-0.5 animate-pulse" />
-              <div className="space-y-1">
-                <div className="font-bold flex items-center space-x-1.5">
-                  <span>🏃 Annuncio Dinamico (Segue l'autore):</span>
-                  <span className="underline">
-                    {item.actionRadiusKm && item.actionRadiusKm > 0
-                      ? `${item.actionRadiusKm} km di disponibilità`
-                      : 'Copertura senza limiti di distanza'}
+              <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 shadow-xs animate-pulse">
+                100m
+              </div>
+              <div className="space-y-1 w-full">
+                <div className="font-bold flex items-center justify-between text-teal-950">
+                  <span>🏃 Annuncio Dinamico (Segue {item.userNickname} via GPS)</span>
+                  <span className="bg-teal-700 text-white px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
+                    100 metri FISSI
                   </span>
                 </div>
-                <p className="text-[11px] opacity-90 leading-relaxed">
-                  {item.actionRadiusKm && item.actionRadiusKm > 0 ? (
-                    item.distanceKm !== undefined && item.distanceKm <= item.actionRadiusKm ? (
+                <p className="text-[11px] leading-relaxed text-teal-900">
+                  {(() => {
+                    const isInside100m = item.distanceKm !== undefined && item.distanceKm <= 0.1;
+                    const distStr = item.distanceKm !== undefined
+                      ? item.distanceKm < 1 ? `${Math.round(item.distanceKm * 1000)} metri` : `${item.distanceKm.toFixed(1)} km`
+                      : '? km';
+                    return isInside100m ? (
                       <>
-                        🎯 <strong>Sei dentro il raggio d'interazione!</strong> Questo annuncio segue <strong>{item.userNickname}</strong> in tempo reale mentre si sposta via GPS. Sei a {item.distanceKm < 1 ? 'meno di 1' : item.distanceKm} km, quindi siete vicini per interagire.
+                        🎯 <strong>Sei a meno di 100 metri dalla persona ({distStr})!</strong> Sei nelle immediate vicinanze di {item.userNickname}. Questo annuncio rispetta la regola di vicinanza per incentivare un'interazione umana immediata e spontanea.
                       </>
                     ) : (
                       <>
-                        📍 L'autore ha scelto un raggio di <strong>{item.actionRadiusKm} km</strong> attorno a sé, mentre attualmente ti trovi a <strong>{item.distanceKm || '?'} km</strong>. L'annuncio si sposterà insieme a lui se si avvicina alla tua zona.
+                        ⚡ <strong>Distanza fissa a 100 metri per incentivare incontri umani:</strong> Questo annuncio viaggia con la persona via GPS ed è configurato sul raggio fisso di 100 metri. Attualmente ti trovi a <strong>{distStr}</strong>; l'annuncio diventerà interagibile quando sarete a meno di 100 metri l'uno dall'altro.
                       </>
-                    )
-                  ) : (
-                    <>
-                      🌐 <strong>{item.userNickname}</strong> ha scelto di rendersi disponibile senza vincoli chilometrici, ovunque si trovi.
-                    </>
-                  )}
+                    );
+                  })()}
                 </p>
               </div>
             </div>

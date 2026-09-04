@@ -100,11 +100,17 @@ async function startServer() {
       return res.status(400).json({ error: "Title is required" });
     }
     const items = getStoredItems();
+    const isStatic = newItem.trackingType === 'static';
+    const actionRadiusKm = isStatic
+      ? Math.min(10, Math.max(0.1, Number(newItem.actionRadiusKm) || 1))
+      : 0.1; // 100 metri fissi per incentivare interazioni umane dirette
+
     const itemToSave = {
       ...newItem,
       id: newItem.id || `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       createdAt: newItem.createdAt || Date.now(),
       status: newItem.status || 'active',
+      actionRadiusKm,
     };
     
     // Check if already exists by id
@@ -130,12 +136,19 @@ async function startServer() {
 
     clientItems.forEach((cItem: any) => {
       if (!cItem || !cItem.title || cItem.id?.startsWith('init-')) return;
+      const isStatic = cItem.trackingType === 'static';
+      const normalizedItem = {
+        ...cItem,
+        actionRadiusKm: isStatic
+          ? Math.min(10, Math.max(0.1, Number(cItem.actionRadiusKm) || 1))
+          : 0.1,
+      };
       const index = items.findIndex((i: any) => i.id === cItem.id || (i.title === cItem.title && i.userId === cItem.userId));
       if (index >= 0) {
-        items[index] = { ...items[index], ...cItem };
+        items[index] = { ...items[index], ...normalizedItem };
         modified = true;
       } else {
-        items.unshift(cItem);
+        items.unshift(normalizedItem);
         modified = true;
       }
     });

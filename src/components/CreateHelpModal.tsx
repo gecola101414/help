@@ -43,7 +43,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   const [category, setCategory] = useState(DEFAULT_HELP_CATEGORIES[0].id);
   const [creditsRequired, setCreditsRequired] = useState<number>(0);
   const [isFree, setIsFree] = useState<boolean>(true);
-  const [actionRadiusKm, setActionRadiusKm] = useState<number>(5);
+  const [actionRadiusKm, setActionRadiusKm] = useState<number>(0.1); // 100 metri fissa per annunci dinamici
 
   // Static location states (Comune, Via, Civico)
   const [staticComune, setStaticComune] = useState(() => {
@@ -292,7 +292,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                 type="button"
                 onClick={() => {
                   setTrackingType('dynamic');
-                  if (actionRadiusKm === 0.3 || actionRadiusKm === 0.5) setActionRadiusKm(5);
+                  setActionRadiusKm(0.1);
                 }}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
                   trackingType === 'dynamic'
@@ -302,10 +302,10 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               >
                 <div className="flex items-center space-x-2 mb-1">
                   <Radio className={`w-4 h-4 ${trackingType === 'dynamic' ? 'text-teal-200 animate-pulse' : 'text-teal-600'}`} />
-                  <span className="font-extrabold text-xs">🏃 Dinamico (Segue Te)</span>
+                  <span className="font-extrabold text-xs">🏃 Dinamico (100m Fissa)</span>
                 </div>
                 <p className={`text-[11px] leading-snug ${trackingType === 'dynamic' ? 'text-teal-100' : 'text-slate-500'}`}>
-                  L'annuncio segue i tuoi spostamenti via GPS in tempo reale. Perfetto per chi è in giro o offre disponibilità personale.
+                  Segue i tuoi spostamenti via GPS. <strong>Distanza fissa a 100 metri</strong> per incentivare incontri e relazioni umane dirette.
                 </p>
               </button>
 
@@ -313,7 +313,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                 type="button"
                 onClick={() => {
                   setTrackingType('static');
-                  if (actionRadiusKm === 5 || actionRadiusKm === 10) setActionRadiusKm(1);
+                  setActionRadiusKm(2);
                 }}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
                   trackingType === 'static'
@@ -323,10 +323,10 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               >
                 <div className="flex items-center space-x-2 mb-1">
                   <Building2 className={`w-4 h-4 ${trackingType === 'static' ? 'text-amber-100' : 'text-amber-600'}`} />
-                  <span className="font-extrabold text-xs">📌 Statico (Luogo Fisso)</span>
+                  <span className="font-extrabold text-xs">📌 Statico (Da 0 a 10 km)</span>
                 </div>
                 <p className={`text-[11px] leading-snug ${trackingType === 'static' ? 'text-amber-100' : 'text-slate-500'}`}>
-                  Fissato a un indirizzo (Comune, via o civico). Visibile solo alle persone quando passano fisicamente nel suo raggio di influenza.
+                  Fissato a un indirizzo (Comune, via o civico). Area d'influenza da 0 a massimo 10 km: visibile solo passando sul posto.
                 </p>
               </button>
             </div>
@@ -501,101 +501,129 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             />
           </div>
 
-          {/* Influence Radius (Raggio d'Azione o di Influenza) */}
-          <div className={`border rounded-2xl p-4 space-y-3 ${
-            trackingType === 'dynamic'
-              ? 'bg-teal-50/80 border-teal-200'
-              : 'bg-amber-50/80 border-amber-200'
-          }`}>
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <div className={`flex items-center space-x-1.5 text-xs font-black uppercase tracking-wider ${
-                  trackingType === 'dynamic' ? 'text-teal-950' : 'text-amber-950'
-                }`}>
-                  {trackingType === 'dynamic' ? (
-                    <>
-                      <Radio className="w-3.5 h-3.5 text-teal-600 animate-pulse" />
-                      <span>Raggio di Disponibilità (L'annuncio ti segue in movimento)</span>
-                    </>
-                  ) : (
-                    <>
-                      <Navigation className="w-3.5 h-3.5 text-amber-600" />
-                      <span>Raggio di Influenza del Luogo Fisso (Chi passa di lì lo vede)</span>
-                    </>
-                  )}
+          {/* Proximity & Influence Radius: 100m Fissa per Dinamici, 0-10 km per Statici */}
+          {trackingType === 'dynamic' ? (
+            <div className="bg-gradient-to-br from-teal-50 to-emerald-50 border-2 border-teal-500/40 rounded-2xl p-4 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                    100m
+                  </div>
+                  <div>
+                    <span className="text-xs font-black uppercase tracking-wider text-teal-950 block">
+                      Distanza Dinamica Fissa: 100 Metri
+                    </span>
+                    <span className="text-[10px] font-semibold text-teal-700">
+                      Regola fondamentale di HELP: incentivare l'interazione umana
+                    </span>
+                  </div>
                 </div>
-                <p className={`text-[11px] mt-1 leading-snug ${
-                  trackingType === 'dynamic' ? 'text-teal-800' : 'text-amber-900'
-                }`}>
-                  {trackingType === 'dynamic'
-                    ? "L'annuncio viaggia insieme alla tua posizione GPS. Chiunque si trovi dentro questo raggio da te potrà vederlo e interagire."
-                    : "L'annuncio resta ancorato a questo luogo fisico. Sarà visibile alle persone solo quando passano fisicamente all'interno del suo raggio d'influenza."}
+                <span className="font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs bg-teal-700 text-white shrink-0">
+                  100 m FISSA
+                </span>
+              </div>
+
+              <div className="bg-white/80 border border-teal-200/80 rounded-xl p-3 text-xs text-teal-950 leading-relaxed space-y-1">
+                <p>
+                  🤝 <strong>Perché 100 metri fissi?</strong> L'annuncio si sposta in tempo reale insieme a te via GPS ed è visibile <strong>esclusivamente a chi si trova a meno di 100 metri</strong> dalla tua persona in questo momento.
+                </p>
+                <p className="text-[11px] text-teal-800">
+                  Questo serve per creare <em>interazioni vere, umane e spontanee</em> tra persone fisicamente presenti nello stesso luogo (nella stessa via, piazza o fermata), evitando inutili distanze digitali.
                 </p>
               </div>
-              <span className={`shrink-0 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs text-white ${
-                trackingType === 'dynamic' ? 'bg-teal-700' : 'bg-amber-600'
-              }`}>
-                {actionRadiusKm === 0 ? 'Illimitato' : actionRadiusKm < 1 ? `${actionRadiusKm * 1000} metri` : `${actionRadiusKm} km`}
-              </span>
-            </div>
 
-            {/* Quick Presets */}
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-1">
-              {(trackingType === 'dynamic' ? [
-                { value: 1, label: '1 km', desc: 'A piedi' },
-                { value: 3, label: '3 km', desc: 'In bici' },
-                { value: 5, label: '5 km', desc: 'Quartiere' },
-                { value: 10, label: '10 km', desc: 'In auto' },
-                { value: 25, label: '25 km', desc: 'Area metrop.' },
-                { value: 0, label: 'Tutto', desc: 'Senza limiti' },
-              ] : [
-                { value: 0.3, label: '300 m', desc: 'Stesso isolato' },
-                { value: 0.5, label: '500 m', desc: 'Quartiere' },
-                { value: 1, label: '1 km', desc: 'A piedi' },
-                { value: 3, label: '3 km', desc: 'Zona vicina' },
-                { value: 5, label: '5 km', desc: 'Area comune' },
-                { value: 0, label: 'Tutto', desc: 'Senza limiti' },
-              ]).map((preset) => {
-                const isSelected = actionRadiusKm === preset.value;
-                return (
-                  <button
-                    key={preset.value}
-                    type="button"
-                    onClick={() => setActionRadiusKm(preset.value)}
-                    className={`px-2 py-2 rounded-xl text-center border transition-all cursor-pointer ${
-                      isSelected
-                        ? trackingType === 'dynamic'
-                          ? 'bg-teal-700 text-white border-teal-700 font-bold shadow-xs'
-                          : 'bg-amber-600 text-white border-amber-600 font-bold shadow-xs'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 font-medium'
-                    }`}
-                  >
-                    <div className="text-xs font-bold leading-none">{preset.label}</div>
-                    <div className={`text-[9px] mt-0.5 ${
-                      isSelected ? 'text-white/80' : 'text-slate-500'
-                    }`}>
-                      {preset.desc}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className={`flex items-center justify-between text-[11px] pt-1 ${
-              trackingType === 'dynamic' ? 'text-teal-800' : 'text-amber-900'
-            }`}>
-              <span className="flex items-center gap-1">
-                <MapPin className="w-3 h-3 text-current" />
-                <span>
-                  {trackingType === 'dynamic' ? (
-                    <>Centro in movimento: <strong>{user?.location?.address || 'GPS attuale'}</strong></>
-                  ) : (
-                    <>Punto fisso ancorato a: <strong>{staticFormattedAddress || staticComune || 'Indirizzo scelto'}</strong></>
-                  )}
+              <div className="flex items-center justify-between text-[11px] text-teal-800 pt-0.5">
+                <span className="flex items-center gap-1 font-medium">
+                  <MapPin className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                  <span>Origine GPS: <strong>{user?.location?.address || 'Posizione dispositivo'}</strong></span>
                 </span>
-              </span>
+                <span className="font-bold text-teal-700 text-[10px] uppercase">Raggio fisso 100 m</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-amber-50/90 border-2 border-amber-400/40 rounded-2xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center space-x-1.5 text-xs font-black uppercase tracking-wider text-amber-950">
+                    <Navigation className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Area d'Influenza del Punto Fisso (Da 0 a 10 km)</span>
+                  </div>
+                  <p className="text-[11px] mt-1 leading-snug text-amber-900">
+                    Scegli tu il raggio massimo entro cui il tuo annuncio sarà visibile: da <strong>100 metri a massimo 10 km</strong>. Si vedrà solo se le persone passano in quell'area.
+                  </p>
+                </div>
+                <span className="shrink-0 font-extrabold text-xs px-2.5 py-1 rounded-xl shadow-xs bg-amber-600 text-white">
+                  {actionRadiusKm < 1 ? `${Math.round(actionRadiusKm * 1000)} metri` : `${actionRadiusKm} km`}
+                </span>
+              </div>
+
+              {/* Slider for precision 0 to 10 km */}
+              <div className="space-y-1.5 bg-white/70 p-3 rounded-xl border border-amber-200/80">
+                <div className="flex justify-between items-center text-xs font-bold text-amber-950">
+                  <span>Regola raggio:</span>
+                  <span className="text-amber-700 font-extrabold">
+                    {actionRadiusKm < 1 ? `${Math.round(actionRadiusKm * 1000)} m` : `${actionRadiusKm.toFixed(1)} km`} (Max 10 km)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.1}
+                  max={10}
+                  step={0.1}
+                  value={actionRadiusKm}
+                  onChange={(e) => setActionRadiusKm(Number(e.target.value))}
+                  className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                />
+                <div className="flex justify-between text-[10px] text-amber-800 font-medium">
+                  <span>100 m (Stessa via)</span>
+                  <span>2 km</span>
+                  <span>5 km</span>
+                  <span>10 km (Massimo)</span>
+                </div>
+              </div>
+
+              {/* Quick Presets (Max 10 km) */}
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 pt-0.5">
+                {[
+                  { value: 0.1, label: '100 m', desc: 'Isolato' },
+                  { value: 0.5, label: '500 m', desc: 'Quartiere' },
+                  { value: 1, label: '1 km', desc: 'A piedi' },
+                  { value: 2, label: '2 km', desc: 'Zona vicina' },
+                  { value: 5, label: '5 km', desc: 'Comune' },
+                  { value: 10, label: '10 km', desc: 'Max consentito' },
+                ].map((preset) => {
+                  const isSelected = Math.abs(actionRadiusKm - preset.value) < 0.05;
+                  return (
+                    <button
+                      key={preset.value}
+                      type="button"
+                      onClick={() => setActionRadiusKm(preset.value)}
+                      className={`px-2 py-2 rounded-xl text-center border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-600 text-white border-amber-600 font-bold shadow-xs'
+                          : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100/50 font-medium'
+                      }`}
+                    >
+                      <div className="text-xs font-bold leading-none">{preset.label}</div>
+                      <div className={`text-[9px] mt-0.5 ${isSelected ? 'text-white/80' : 'text-slate-500'}`}>
+                        {preset.desc}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] pt-1 text-amber-900">
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-current" />
+                  <span>
+                    Punto fisso ancorato a: <strong>{staticFormattedAddress || staticComune || 'Indirizzo inserito'}</strong>
+                  </span>
+                </span>
+                <span className="text-[10px] text-amber-700 font-semibold">Visibile solo in loco</span>
+              </div>
+            </div>
+          )}
 
           {/* Free vs Credits */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
