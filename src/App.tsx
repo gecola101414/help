@@ -211,12 +211,19 @@ export default function App() {
     try {
       const res = await fetch('/api/help-items');
       if (res.ok) {
-        const serverList = await res.json();
-        if (Array.isArray(serverList)) {
-          const cleanServerList = serverList.filter(i => !i.id?.startsWith('init-'));
-          setItems(enrichItemsWithDistance(cleanServerList, userRef.current));
-          if (cleanServerList.length === 0) {
-            localStorage.setItem('help_items_local', JSON.stringify([]));
+        const text = await res.text();
+        if (text.startsWith('[') || text.startsWith('{')) {
+          const serverList = JSON.parse(text);
+          if (Array.isArray(serverList) && serverList.length > 0) {
+            const cleanServerList = serverList.filter(i => !i.id?.startsWith('init-'));
+            setItems((prev) => {
+              const map = new Map<string, HelpItem>();
+              cleanServerList.forEach((item) => map.set(item.id, item));
+              prev.forEach((item) => {
+                if (!map.has(item.id)) map.set(item.id, item);
+              });
+              return enrichItemsWithDistance(Array.from(map.values()), userRef.current);
+            });
           }
         }
       }
@@ -236,15 +243,20 @@ export default function App() {
       eventSource.onmessage = (e) => {
         try {
           const list = JSON.parse(e.data);
-          if (Array.isArray(list)) {
+          if (Array.isArray(list) && list.length > 0) {
             const cleanList = list.filter((i: any) => !i.id?.startsWith('init-'));
-            setItems(enrichItemsWithDistance(cleanList, userRef.current));
+            setItems((prev) => {
+              const map = new Map<string, HelpItem>();
+              cleanList.forEach((item: HelpItem) => map.set(item.id, item));
+              prev.forEach((item) => {
+                if (!map.has(item.id)) map.set(item.id, item);
+              });
+              return enrichItemsWithDistance(Array.from(map.values()), userRef.current);
+            });
           }
         } catch (err) {}
       };
-      eventSource.onerror = () => {
-        // SSE will attempt auto-reconnect; fallback polling ensures updates continue
-      };
+      eventSource.onerror = () => {};
     } catch (e) {}
 
     // Check if there are local items to sync to server
@@ -269,8 +281,8 @@ export default function App() {
       } catch (e) {}
     }
 
-    // Polling fallback every 3 seconds
-    const interval = setInterval(fetchServerItems, 3000);
+    // Polling fallback every 10 seconds
+    const interval = setInterval(fetchServerItems, 10000);
     const handleFocus = () => fetchServerItems();
     const handleOnline = () => fetchServerItems();
     window.addEventListener('focus', handleFocus);
@@ -290,48 +302,42 @@ export default function App() {
   useEffect(() => {
     let unsubscribeItems: (() => void) | undefined;
 
-    async function initFirestore() {
-      try {
-        await ensureAuth();
+    try {
+      unsubscribeItems = onSnapshot(
+        collection(db, 'help_items'),
+        (snapshot) => {
+          const fetched: HelpItem[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as HelpItem;
+            
+            // Skip legacy test or expired items
+            if (data.id?.startsWith('init-') || docSnap.id.startsWith('test_')) return;
+            const durationMs = (data.durationMinutes || 24 * 60) * 60 * 1000;
+            const isExpired = (Date.now() - data.createdAt) > durationMs;
+            if (isExpired) return;
 
-        unsubscribeItems = onSnapshot(
-          collection(db, 'help_items'),
-          (snapshot) => {
-            const fetched: HelpItem[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data() as HelpItem;
-              
-              // Skip legacy test or expired items
-              if (data.id?.startsWith('init-')) return;
-              const durationMs = (data.durationMinutes || 24 * 60) * 60 * 1000;
-              const isExpired = (Date.now() - data.createdAt) > durationMs;
-              if (isExpired) return;
+            const targetCoords = data.trackingType === 'static' && data.customCoords 
+              ? data.customCoords 
+              : data.location;
+            const rawDist = userRef.current && targetCoords && typeof targetCoords.lat === 'number'
+              ? calculateDistance(userRef.current.location.lat, userRef.current.location.lng, targetCoords.lat, targetCoords.lng)
+              : 1.0;
+            const dist = Number(rawDist.toFixed(3));
+            fetched.push({ ...data, id: docSnap.id, distanceKm: dist });
+          });
 
-              const targetCoords = data.trackingType === 'static' && data.customCoords 
-                ? data.customCoords 
-                : data.location;
-              const rawDist = userRef.current && targetCoords
-                ? calculateDistance(userRef.current.location.lat, userRef.current.location.lng, targetCoords.lat, targetCoords.lng)
-                : 1.0;
-              const dist = Number(rawDist.toFixed(3));
-              fetched.push({ ...data, id: docSnap.id, distanceKm: dist });
-            });
-
-            // Authoritative Firestore database update
-            const enriched = enrichItemsWithDistance(fetched, userRef.current);
-            setItems(enriched);
-            localStorage.setItem('help_items_local', JSON.stringify(enriched));
-          },
-          (err) => {
-            console.warn('Firestore snapshot listener warning:', err);
-          }
-        );
-      } catch (err) {
-        console.warn('Firestore init error:', err);
-      }
+          // Authoritative Firestore database update
+          const enriched = enrichItemsWithDistance(fetched, userRef.current);
+          setItems(enriched);
+          localStorage.setItem('help_items_local', JSON.stringify(enriched));
+        },
+        (err) => {
+          console.warn('[Firestore] snapshot listener warning:', err);
+        }
+      );
+    } catch (err) {
+      console.warn('[Firestore] init error:', err);
     }
-
-    initFirestore();
 
     return () => {
       if (unsubscribeItems) unsubscribeItems();
@@ -402,8 +408,15 @@ export default function App() {
       category: newHelpData.category,
       location: itemLocation,
       trackingType,
-      staticLocation: newHelpData.staticLocation,
+      staticLocation: newHelpData.staticLocation ? {
+        comune: newHelpData.staticLocation.comune || '',
+        via: newHelpData.staticLocation.via || '',
+        civico: newHelpData.staticLocation.civico || '',
+        formattedAddress: newHelpData.staticLocation.formattedAddress || itemLocation.address,
+      } : undefined,
+      customCoords: trackingType === 'static' ? (newHelpData.customCoords || itemLocation) : undefined,
       actionRadiusKm: effectiveRadius,
+      durationMinutes: newHelpData.durationMinutes || 24 * 60,
       creditsRequired: newHelpData.creditsRequired,
       isFree: newHelpData.isFree,
       status: 'active' as const,
@@ -422,7 +435,7 @@ export default function App() {
     // Update locally immediately
     setItems((prev) => [localItem, ...prev]);
 
-    // 1. Post to Server shared API (syncs to PC/mobile immediately)
+    // 1. Post to Server shared API (syncs if server is present)
     try {
       await fetch('/api/help-items', {
         method: 'POST',
@@ -433,11 +446,13 @@ export default function App() {
       console.warn('Server item post failed:', err);
     }
 
-    // 2. Also save to Firestore cloud database
+    // 2. Also save to Firestore cloud database with complete undefined-sanitization
     try {
-      await setDoc(doc(db, 'help_items', newId), newItemData);
+      const sanitizedPayload = JSON.parse(JSON.stringify(newItemData));
+      await setDoc(doc(db, 'help_items', newId), sanitizedPayload);
+      console.log('[Firestore] Annuncio salvato nel cloud con successo:', newId);
     } catch (err) {
-      console.warn('Firestore write fallback:', err);
+      console.error('[Firestore] Errore salvataggio annuncio cloud:', err);
     }
   };
 

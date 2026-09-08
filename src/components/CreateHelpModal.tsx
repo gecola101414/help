@@ -293,11 +293,11 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       durationMinutes,
       staticLocation: trackingType === 'static' ? {
         comune: staticComune.trim(),
-        via: staticVia.trim() || undefined,
-        civico: staticCivico.trim() || undefined,
-        formattedAddress: formattedAddr,
+        via: staticVia.trim(),
+        civico: staticCivico.trim(),
+        formattedAddress: formattedAddr || staticComune.trim(),
       } : undefined,
-      customCoords: trackingType === 'static' ? (finalCoords || undefined) : undefined,
+      customCoords: trackingType === 'static' ? (finalCoords || { lat: 45.6800, lng: 8.7075 }) : undefined,
     });
     onClose();
   };
