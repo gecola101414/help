@@ -44,6 +44,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   const [creditsRequired, setCreditsRequired] = useState<number>(0);
   const [isFree, setIsFree] = useState<boolean>(true);
   const [actionRadiusKm, setActionRadiusKm] = useState<number>(0.1); // 100 metri fissa per annunci dinamici
+  const [durationMinutes, setDurationMinutes] = useState<number>(24 * 60);
 
   // Static location states (Comune, Via, Civico)
   const [staticComune, setStaticComune] = useState(() => {
@@ -220,6 +221,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       isFree,
       trackingType,
       actionRadiusKm,
+      durationMinutes,
       staticLocation: trackingType === 'static' ? {
         comune: staticComune.trim(),
         via: staticVia.trim() || undefined,
@@ -664,6 +666,35 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Duration Selector */}
+          <div className="space-y-2 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+            <label className="block text-xs font-bold text-slate-700">Durata dell'annuncio (Cogli l'attimo)</label>
+            <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
+              Gli annunci svaniscono dopo la scadenza per mantenere l'ecosistema in tempo reale.
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { label: '10 min', value: 10 },
+                { label: '30 min', value: 30 },
+                { label: '2 ore', value: 120 },
+                { label: '24 ore', value: 1440 },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setDurationMinutes(opt.value)}
+                  className={`py-2 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                    durationMinutes === opt.value
+                      ? 'bg-slate-800 text-white border-slate-800 shadow-md'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Submit */}

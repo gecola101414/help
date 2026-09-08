@@ -70,6 +70,7 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<HelpItem | null>(null);
+  const [followedUserId, setFollowedUserId] = useState<string | null>(null);
 
   // Real GPS Geolocation on startup and manual sync (Announcements follow the creator!)
   const syncCreatorLocationToAnnouncements = async (userId: string, newLocation: { lat: number; lng: number; address: string }) => {
@@ -500,6 +501,8 @@ export default function App() {
             onSelectItem={(item) => setSelectedItem(item)}
             onOpenCreate={() => setIsCreateOpen(true)}
             onOpenProfile={() => setIsProfileOpen(true)}
+            followedUserId={followedUserId}
+            setFollowedUserId={setFollowedUserId}
           />
         )}
 
@@ -510,6 +513,8 @@ export default function App() {
             onSelectItem={(item) => setSelectedItem(item)}
             onOpenCreate={() => setIsCreateOpen(true)}
             onUpdateLocation={handleUpdateLocation}
+            followedUserId={followedUserId}
+            setFollowedUserId={setFollowedUserId}
           />
         )}
 
@@ -550,6 +555,8 @@ export default function App() {
         onClose={() => setSelectedItem(null)}
         user={user}
         onUpdateItemStatus={handleUpdateItemStatus}
+        followedUserId={followedUserId}
+        setFollowedUserId={setFollowedUserId}
       />
 
       {/* Footer */}

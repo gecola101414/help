@@ -39,6 +39,7 @@ export interface HelpItem {
     formattedAddress: string;
   };
   actionRadiusKm?: number; // Raggio d'azione/influenza (entro cui bisogna passare/trovarsi per visualizzarlo)
+  durationMinutes?: number; // Durata dell'annuncio (da 10 min a 24 ore)
   creditsRequired: number; // 0 for free, >0 if needs credits
   isFree: boolean;
   status: 'active' | 'in_progress' | 'completed' | 'cancelled';

@@ -15,12 +15,43 @@ function getStoredItems(): any[] {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
+    let items: any[] = [];
     if (!fs.existsSync(ITEMS_FILE)) {
-      fs.writeFileSync(ITEMS_FILE, "[]", "utf-8");
-      return [];
+      items = [];
+    } else {
+      const data = fs.readFileSync(ITEMS_FILE, "utf-8");
+      items = JSON.parse(data) || [];
     }
-    const data = fs.readFileSync(ITEMS_FILE, "utf-8");
-    return JSON.parse(data) || [];
+
+    // Ensure "Guida turistica a Sanremo" is always seeded for synchronization across devices
+    const hasSanremo = items.some((i: any) => i.title?.toLowerCase().includes("sanremo"));
+    if (!hasSanremo) {
+      items.unshift({
+        id: "item_sanremo_guida_1",
+        title: "Guida turistica a Sanremo",
+        description: "Disponibile per accompagnare visitatori e turisti alla scoperta dei luoghi storici, la Pigna e la passeggiata dell'Imperatrice a Sanremo.",
+        category: "Turismo & Cultura",
+        type: "offer",
+        trackingType: "static",
+        actionRadiusKm: 5,
+        userNickname: "Marco (Sanremo)",
+        userId: "user_sanremo_1",
+        status: "active",
+        createdAt: Date.now() - 3600000,
+        staticLocation: {
+          comune: "Sanremo",
+          via: "Corso Matteotti",
+          civico: "15"
+        },
+        location: {
+          lat: 43.8158,
+          lng: 7.7761,
+          address: "Corso Matteotti, 15, Sanremo"
+        }
+      });
+      saveStoredItems(items);
+    }
+    return items;
   } catch (err) {
     console.error("Error reading items file:", err);
     return [];
@@ -91,7 +122,23 @@ async function startServer() {
 
   // API Routes for shared cross-device help items
   app.get("/api/help-items", (req, res) => {
-    res.json(getStoredItems());
+    const now = Date.now();
+    let items = getStoredItems();
+    
+    // Filtra gli annunci scaduti (tempo di default 24 ore se non specificato)
+    const validItems = items.filter((item: any) => {
+      const durationMs = (item.durationMinutes || 24 * 60) * 60 * 1000;
+      const isExpired = (now - item.createdAt) > durationMs;
+      // Mantieni gli annunci non scaduti (o quelli completati/cancellati che forse vogliamo tenere in storico, 
+      // ma per ora filtriamo tutto ciò che è scaduto per l'effetto "cogli l'attimo")
+      return !isExpired;
+    });
+
+    if (validItems.length !== items.length) {
+      saveStoredItems(validItems); // clean up storage
+    }
+
+    res.json(validItems);
   });
 
   app.post("/api/help-items", (req, res) => {
@@ -330,7 +377,18 @@ async function startServer() {
 
   app.get("/api/help-items/:id/messages", (req, res) => {
     const { id } = req.params;
-    const msgs = getStoredMessages().filter((m: any) => m.helpItemId === id);
+    const now = Date.now();
+    let allMsgs = getStoredMessages();
+    
+    // Filtra i messaggi più vecchi di 1 minuto (60.000 ms) per l'effetto "cogli l'attimo"
+    const validMsgs = allMsgs.filter((m: any) => (now - m.createdAt) <= 60000);
+    
+    if (validMsgs.length !== allMsgs.length) {
+      saveStoredMessages(validMsgs); // clean up storage
+      allMsgs = validMsgs;
+    }
+
+    const msgs = allMsgs.filter((m: any) => m.helpItemId === id);
     res.json(msgs);
   });
 

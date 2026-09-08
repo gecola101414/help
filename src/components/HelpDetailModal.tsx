@@ -10,6 +10,8 @@ interface HelpDetailModalProps {
   onClose: () => void;
   user: UserProfile | null;
   onUpdateItemStatus: (itemId: string, newStatus: HelpItem['status'], helperId?: string, helperNickname?: string) => void;
+  followedUserId?: string | null;
+  setFollowedUserId?: (id: string | null) => void;
 }
 
 export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
@@ -18,6 +20,8 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   onClose,
   user,
   onUpdateItemStatus,
+  followedUserId,
+  setFollowedUserId,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -89,6 +93,12 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
   const isOwner = user?.id === item.userId;
   const isHelper = user?.id === item.helperId;
+  const isStatic = item.trackingType === 'static';
+  const effectiveRadius = isStatic
+    ? Math.min(10, Math.max(0.1, item.actionRadiusKm || 1))
+    : 0.1; // 100 meters for dynamic
+
+  const isWithinRadius = isOwner || (item.distanceKm !== undefined && item.distanceKm <= effectiveRadius);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -175,7 +185,21 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 <User className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Pubblicato da: <strong className="text-slate-800">{item.userNickname}</strong></span>
               </div>
-              <div className="flex items-center space-x-1.5">
+              
+              {!isOwner && setFollowedUserId && (
+                <button
+                  onClick={() => setFollowedUserId(followedUserId === item.userId ? null : item.userId)}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase transition-all cursor-pointer ${
+                    followedUserId === item.userId
+                      ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+                  }`}
+                >
+                  {followedUserId === item.userId ? 'Non seguire più' : 'Segui Annunci'}
+                </button>
+              )}
+
+              <div className="flex items-center space-x-1.5 mt-2 w-full sm:w-auto sm:mt-0">
                 <MapPin className="w-3.5 h-3.5 text-emerald-600" />
                 <span>{item.location.address} {item.distanceKm !== undefined ? `(${item.distanceKm} km)` : ''}</span>
               </div>
@@ -281,19 +305,26 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             {/* Action buttons */}
             <div>
               {item.status === 'active' && !isOwner && (
-                <button
-                  onClick={handleTakeAction}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center space-x-1.5"
-                >
-                  <HeartHandshake className="w-4 h-4" />
-                  <span>{item.type === 'request' ? 'Voglio Aiutare io!' : 'Accetta questo Aiuto'}</span>
-                </button>
+                isWithinRadius ? (
+                  <button
+                    onClick={handleTakeAction}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <HeartHandshake className="w-4 h-4" />
+                    <span>{item.type === 'request' ? 'Voglio Aiutare io!' : 'Accetta questo Aiuto'}</span>
+                  </button>
+                ) : (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 rounded-xl text-[11px] font-bold flex items-center space-x-1.5">
+                    <span>🔒</span>
+                    <span>Fuori dal raggio d'azione (serve vicinanza)</span>
+                  </div>
+                )
               )}
 
               {item.status === 'in_progress' && (isOwner || isHelper) && (
                 <button
                   onClick={handleComplete}
-                  className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-teal-700/20 transition-all flex items-center space-x-1.5"
+                  className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-teal-700/20 transition-all flex items-center space-x-1.5 cursor-pointer"
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span>Segna come Completato & Crediti</span>
@@ -310,15 +341,34 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
           {/* Chat / Coordination Section */}
           <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col h-64 bg-slate-50">
-            <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-200 flex items-center space-x-2 text-xs font-bold text-slate-700">
-              <MessageSquare className="w-4 h-4 text-emerald-600" />
-              <span>Coordinamento & Chat di Vicinato</span>
+            <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
+              <div className="flex items-center space-x-2">
+                <MessageSquare className="w-4 h-4 text-emerald-600" />
+                <span>Coordinamento & Chat di Vicinato</span>
+              </div>
+              {!isWithinRadius && !isOwner && (
+                <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-extrabold uppercase tracking-wide">
+                  🔒 Chat sbloccabile nel raggio ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})
+                </span>
+              )}
             </div>
 
             <div className="flex-1 p-4 overflow-y-auto space-y-3">
+              {!isWithinRadius && !isOwner && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 flex items-start space-x-2.5">
+                  <span className="text-base shrink-0">📍</span>
+                  <div className="space-y-0.5">
+                    <div className="font-bold">Regola di vicinanza per i messaggi:</div>
+                    <div className="text-[11px] opacity-90 leading-relaxed">
+                      Puoi vedere questo annuncio ovunque, ma per inviare messaggi e metterti in contatto devi trovarti all'interno del raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat e interagire con {item.userNickname}!
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {messages.length === 0 ? (
-                <div className="text-center text-xs text-slate-400 py-8">
-                  Nessun messaggio ancora. Scrivi qui sotto per accordarti sui dettagli dell'aiuto in modo semplice e diretto!
+                <div className="text-center text-xs text-slate-400 py-6">
+                  Nessun messaggio ancora. Scrivi qui sotto per accordarti sui dettagli dell'aiuto!
                 </div>
               ) : (
                 messages.map((msg) => {
@@ -342,13 +392,14 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                placeholder="Scrivi un messaggio per coordinarti..."
-                className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                disabled={!isWithinRadius && !isOwner}
+                placeholder={isWithinRadius || isOwner ? "Scrivi un messaggio per coordinarti..." : `🔒 Avvicinati entro ${effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'} per mandare messaggi`}
+                className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
               />
               <button
                 type="submit"
-                disabled={loadingMsg || !inputText.trim()}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 disabled:opacity-50"
+                disabled={loadingMsg || !inputText.trim() || (!isWithinRadius && !isOwner)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>Invia</span>

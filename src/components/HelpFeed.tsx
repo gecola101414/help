@@ -1,6 +1,7 @@
+import { Dispatch, SetStateAction } from "react";
 import React, { useState } from 'react';
 import { HelpItem, UserProfile, DEFAULT_HELP_CATEGORIES } from '../types';
-import { Search, MapPin, Coins, HeartHandshake, HelpCircle, Filter, Compass, Plus, Sparkles, CheckCircle2, Radio, Info } from 'lucide-react';
+import { Search, MapPin, Coins, HeartHandshake, HelpCircle, Filter, Compass, Plus, Sparkles, CheckCircle2, Radio, Info, User } from 'lucide-react';
 
 interface HelpFeedProps {
   items: HelpItem[];
@@ -10,6 +11,8 @@ interface HelpFeedProps {
   onSelectItem: (item: HelpItem) => void;
   onOpenCreate: () => void;
   onOpenProfile: () => void;
+  followedUserId?: string | null;
+  setFollowedUserId?: (id: string | null) => void;
 }
 
 export const HelpFeed: React.FC<HelpFeedProps> = ({
@@ -20,6 +23,8 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
   onSelectItem,
   onOpenCreate,
   onOpenProfile,
+  followedUserId,
+  setFollowedUserId,
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
   const [filterTracking, setFilterTracking] = useState<'all' | 'dynamic' | 'static'>('all');
@@ -27,9 +32,15 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   // Novità: vedi solo le cose dove ti trovi (l'annuncio segue l'autore e copre la tua posizione)
   const [onlyInActionRadius, setOnlyInActionRadius] = useState<boolean>(true);
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   // Filter items based on type, tracking mode, category, distance, creator's dynamic radius, and search query
   const filteredItems = items.filter((item) => {
+    // If following someone, only show their items (and my own items so I can still see mine, but the user said "il resto degli annunci non li devo vedere" so let's STRICTLY show only the followed user's items)
+    if (followedUserId && item.userId !== followedUserId) {
+      return false;
+    }
+
     // Type filter
     if (filterType === 'offer' && item.type !== 'offer') return false;
     if (filterType === 'request' && item.type !== 'request') return false;
@@ -115,6 +126,31 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Followed Entity Indicator */}
+      {followedUserId && (
+        <div className="bg-amber-100 border border-amber-300 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center space-x-3">
+            <div className="bg-amber-500 text-white p-2 rounded-full">
+              <User className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-amber-900">Stai seguendo un commerciante/utente</h3>
+              <p className="text-xs text-amber-800">
+                Stai vedendo solo gli annunci legati a questa attività o persona.
+              </p>
+            </div>
+          </div>
+          {setFollowedUserId && (
+            <button
+              onClick={() => setFollowedUserId(null)}
+              className="bg-white hover:bg-amber-50 text-amber-900 border border-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              Rimuovi filtro
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-100 shadow-sm space-y-4">
@@ -345,31 +381,72 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredItems.map((item) => {
             const isOffer = item.type === 'offer';
+            
+            // Calcolo tempo rimanente
+            const durationMs = (item.durationMinutes || 24 * 60) * 60 * 1000;
+            const expiresAt = item.createdAt + durationMs;
+            const remainingMs = expiresAt - Date.now();
+            const remainingMins = Math.max(0, Math.floor(remainingMs / 60000));
+            const remainingHours = Math.floor(remainingMins / 60);
+            const timeString = remainingHours > 0 
+              ? `${remainingHours}h e ${remainingMins % 60}m` 
+              : `${remainingMins} min`;
+
             return (
               <div
                 key={item.id}
                 onClick={() => onSelectItem(item)}
-                className="bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-lg transition-all duration-200 p-6 flex flex-col justify-between cursor-pointer group hover:-translate-y-1"
+                onMouseEnter={() => setHoveredItemId(item.id)}
+                onMouseLeave={() => setHoveredItemId(null)}
+                className="relative bg-white rounded-2xl border border-slate-100 shadow-sm hover:shadow-2xl transition-all duration-200 p-6 flex flex-col justify-between cursor-pointer group hover:-translate-y-1"
               >
+                {/* Hover Quick Preview Card (Scheda al passaggio del mouse) */}
+                {hoveredItemId === item.id && (
+                  <div className="absolute inset-x-2 -top-32 z-50 bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-700 animate-in fade-in zoom-in-95 duration-150 pointer-events-none">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-emerald-400 mb-1">
+                      <span>{isOffer ? '🤝 Disponibilità' : '🆘 Esigenza'} ({item.trackingType === 'static' ? '📌 Punto Fisso' : '🏃 100m'})</span>
+                      <span>{item.userNickname}</span>
+                    </div>
+                    <div className="text-xs font-bold line-clamp-1 text-white mb-1">{item.title}</div>
+                    <p className="text-[11px] text-slate-300 line-clamp-2 leading-tight">
+                      {item.description}
+                    </p>
+                    <div className="mt-2.5 pt-1.5 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+                      <span>{item.staticLocation?.comune || item.location?.address || 'Vicinanze'}</span>
+                      <span className="text-emerald-300 font-extrabold">Clicca per chat & dettagli 💬</span>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-3">
                   
-                  {/* Top tags */}
+                  {/* Top symbols instead of text names */}
                   <div className="flex items-center justify-between">
-                    <span className={`text-[10px] uppercase font-extrabold px-2.5 py-1 rounded-full flex items-center space-x-1 ${
-                      isOffer ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {isOffer ? <HeartHandshake className="w-3 h-3 mr-1" /> : <HelpCircle className="w-3 h-3 mr-1" />}
-                      <span>{isOffer ? 'Offre Aiuto' : 'Cerca Aiuto'}</span>
-                    </span>
-                    <span className="text-xs text-slate-500 font-bold">
-                      {item.distanceKm !== undefined
-                        ? item.distanceKm < 0.1
-                          ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
-                          : item.distanceKm < 1
-                          ? `${Math.round(item.distanceKm * 1000)} m da te`
-                          : `${item.distanceKm.toFixed(1)} km da te`
-                        : 'Vicinanze'}
-                    </span>
+                    <div className="flex items-center space-x-1.5">
+                      <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold shadow-xs ${
+                        isOffer ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      }`} title={isOffer ? 'Disponibilità' : 'Esigenza'}>
+                        {isOffer ? '🤝' : '🆘'}
+                      </span>
+                      <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold shadow-xs ${
+                        item.trackingType === 'static' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-teal-50 text-teal-800 border border-teal-200'
+                      }`} title={item.trackingType === 'static' ? 'Punto Fisso' : 'In Movimento (100m)'}>
+                        {item.trackingType === 'static' ? '📌' : '🏃'}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                        ⏱ Svanisce tra {timeString}
+                      </span>
+                      <span className="text-xs text-slate-500 font-bold">
+                        {item.distanceKm !== undefined
+                          ? item.distanceKm < 0.1
+                            ? `${Math.round(item.distanceKm * 1000)} m (Entro 100m!)`
+                            : item.distanceKm < 1
+                            ? `${Math.round(item.distanceKm * 1000)} m`
+                            : `${item.distanceKm.toFixed(1)} km`
+                          : 'Vicinanze'}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Title & Description */}

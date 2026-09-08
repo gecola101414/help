@@ -16,7 +16,7 @@ import {
   SlidersHorizontal,
   Check,
   Radio
-} from 'lucide-react';
+, User } from 'lucide-react';
 
 interface MapViewProps {
   items: HelpItem[];
@@ -24,6 +24,8 @@ interface MapViewProps {
   onSelectItem: (item: HelpItem) => void;
   onOpenCreate: () => void;
   onUpdateLocation: () => void;
+  followedUserId?: string | null;
+  setFollowedUserId?: (id: string | null) => void;
 }
 
 interface PositionedItem {
@@ -39,6 +41,8 @@ export const MapView: React.FC<MapViewProps> = ({
   onSelectItem,
   onOpenCreate,
   onUpdateLocation,
+  followedUserId,
+  setFollowedUserId,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -75,6 +79,11 @@ export const MapView: React.FC<MapViewProps> = ({
   // Filtered items based on active criteria
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      // Follow filter
+      if (followedUserId && item.userId !== followedUserId) {
+        return false;
+      }
+
       // Type filter
       if (filterType === 'offer' && item.type !== 'offer') return false;
       if (filterType === 'request' && item.type !== 'request') return false;
@@ -759,6 +768,31 @@ export const MapView: React.FC<MapViewProps> = ({
           </button>
         </div>
       ) : null}
+
+      {/* Followed Entity Indicator */}
+      {followedUserId && (
+        <div className="bg-amber-100 border border-amber-300 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+          <div className="flex items-center space-x-3">
+            <div className="bg-amber-500 text-white p-2 rounded-full">
+              <User className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-amber-900">Stai seguendo un commerciante/utente</h3>
+              <p className="text-xs text-amber-800">
+                Sulla mappa sono mostrati solo i suoi annunci.
+              </p>
+            </div>
+          </div>
+          {setFollowedUserId && (
+            <button
+              onClick={() => setFollowedUserId(null)}
+              className="bg-white hover:bg-amber-50 text-amber-900 border border-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              Rimuovi filtro
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Map Container */}
       <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden relative">
