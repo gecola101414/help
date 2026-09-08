@@ -1,6 +1,7 @@
 export interface UserProfile {
   id: string;
   nickname: string;
+  passcode?: string; // Codice segreto per accreditamento auto-gestito (es. Nome+6cifre)
   location: {
     lat: number;
     lng: number;

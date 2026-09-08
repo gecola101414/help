@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, HelpItem } from './types';
 import { db, ensureAuth } from './lib/firebase';
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import { Navbar } from './components/Navbar';
 import { UserProfileModal } from './components/UserProfileModal';
 import { CreateHelpModal } from './components/CreateHelpModal';
@@ -38,11 +38,21 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(() => {
     const saved = localStorage.getItem('help_user_profile');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) { }
+      try {
+        const parsed = JSON.parse(saved);
+        if (!parsed.passcode) {
+          parsed.passcode = (parsed.nickname || 'Vicino') + Math.floor(100000 + Math.random() * 900000);
+          localStorage.setItem('help_user_profile', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch (e) { }
     }
+    const defaultName = 'CittadinoSolidale';
+    const defaultCode = defaultName + Math.floor(100000 + Math.random() * 900000);
     return {
       id: 'user-' + Math.random().toString(36).substring(2, 9),
-      nickname: 'CittadinoSolidale',
+      nickname: defaultName,
+      passcode: defaultCode,
       location: { lat: 45.6836, lng: 8.7071, address: 'Somma Lombardo (VA)' },
       offers: ['Spesa e Commissioni a Domicilio', 'Piccoli Lavoretti Domestici'],
       requests: [],
@@ -345,13 +355,24 @@ export default function App() {
   }, [user?.location?.lat, user?.location?.lng]);
 
   // Save user profile to localStorage & sync
-  const handleSaveProfile = (updated: Partial<UserProfile>) => {
+  const handleSaveProfile = async (updated: Partial<UserProfile>) => {
     if (!user) return;
     const newProfile = { ...user, ...updated };
     setUser(newProfile);
     localStorage.setItem('help_user_profile', JSON.stringify(newProfile));
     if (updated.location && user.id) {
       syncCreatorLocationToAnnouncements(user.id, updated.location);
+    }
+    // Also sync to cloud collection help_users
+    try {
+      if (newProfile.id) {
+        await setDoc(doc(db, 'help_users', newProfile.id), JSON.parse(JSON.stringify({
+          ...newProfile,
+          lastLoginAt: Date.now()
+        })), { merge: true });
+      }
+    } catch (e) {
+      console.warn('Firestore user profile sync error:', e);
     }
   };
 
@@ -504,17 +525,24 @@ export default function App() {
     } catch (err) {}
   };
 
-  // Delete item
+  // Delete item & clean up dedicated chat messages
   const handleDeleteItem = async (itemId: string) => {
     setItems((prev) => prev.filter((i) => i.id !== itemId));
+    if (selectedItem && selectedItem.id === itemId) {
+      setSelectedItem(null);
+    }
 
     // 1. Delete on Server API
     try {
       await fetch(`/api/help-items/${itemId}`, { method: 'DELETE' });
     } catch (err) {}
 
-    // 2. Delete on Firestore
+    // 2. Delete on Firestore: remove subcollection chat messages + announcement doc
     try {
+      const msgsSnap = await getDocs(collection(db, 'help_items', itemId, 'messages'));
+      for (const mDoc of msgsSnap.docs) {
+        await deleteDoc(doc(db, 'help_items', itemId, 'messages', mDoc.id));
+      }
       await deleteDoc(doc(db, 'help_items', itemId));
     } catch (err) {}
   };
@@ -599,6 +627,7 @@ export default function App() {
         onClose={() => setSelectedItem(null)}
         user={user}
         onUpdateItemStatus={handleUpdateItemStatus}
+        onDeleteItem={handleDeleteItem}
         followedUserId={followedUserId}
         setFollowedUserId={setFollowedUserId}
       />

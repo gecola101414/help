@@ -241,6 +241,14 @@ async function startServer() {
     items = items.filter((i: any) => i.id !== id);
     saveStoredItems(items);
     broadcastItemsUpdate(items);
+
+    // Wipe chat messages for this announcement
+    try {
+      let allMsgs = getStoredMessages();
+      allMsgs = allMsgs.filter((m: any) => m.helpItemId !== id);
+      saveStoredMessages(allMsgs);
+    } catch {}
+
     res.json({ success: true });
   });
 
@@ -407,17 +415,7 @@ async function startServer() {
 
   app.get("/api/help-items/:id/messages", (req, res) => {
     const { id } = req.params;
-    const now = Date.now();
-    let allMsgs = getStoredMessages();
-    
-    // Filtra i messaggi più vecchi di 1 minuto (60.000 ms) per l'effetto "cogli l'attimo"
-    const validMsgs = allMsgs.filter((m: any) => (now - m.createdAt) <= 60000);
-    
-    if (validMsgs.length !== allMsgs.length) {
-      saveStoredMessages(validMsgs); // clean up storage
-      allMsgs = validMsgs;
-    }
-
+    const allMsgs = getStoredMessages();
     const msgs = allMsgs.filter((m: any) => m.helpItemId === id);
     res.json(msgs);
   });

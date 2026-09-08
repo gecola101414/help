@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, ShieldCheck, MessageSquare, Radio } from 'lucide-react';
+import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, MessageSquare, Trash2, ShieldCheck, Lock } from 'lucide-react';
 import { HelpItem, UserProfile, ChatMessage } from '../types';
 import { db } from '../lib/firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, updateDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, doc, deleteDoc, getDocs } from 'firebase/firestore';
 
 interface HelpDetailModalProps {
   item: HelpItem | null;
@@ -10,6 +10,7 @@ interface HelpDetailModalProps {
   onClose: () => void;
   user: UserProfile | null;
   onUpdateItemStatus: (itemId: string, newStatus: HelpItem['status'], helperId?: string, helperNickname?: string) => void;
+  onDeleteItem?: (itemId: string) => void;
   followedUserId?: string | null;
   setFollowedUserId?: (id: string | null) => void;
 }
@@ -20,6 +21,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   onClose,
   user,
   onUpdateItemStatus,
+  onDeleteItem,
   followedUserId,
   setFollowedUserId,
 }) => {
@@ -28,6 +30,9 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   const [loadingMsg, setLoadingMsg] = useState(false);
 
   useEffect(() => {
+    // 0. RESET MESSAGES: ogni annuncio ha la sua chat dedicata ed esclusiva
+    setMessages([]);
+
     if (!isOpen || !item) return;
 
     // 1. Fetch from server API
@@ -51,43 +56,32 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     };
 
     fetchServerMessages();
-    const interval = setInterval(fetchServerMessages, 3000);
 
-    // 2. Listen to Firestore messages
+    // 2. Listen to dedicated Firestore subcollection for this specific announcement
     let unsubscribe: (() => void) | undefined;
     try {
-      const q = query(
-        collection(db, 'help_messages'),
-        where('helpItemId', '==', item.id)
-      );
-
+      const messagesRef = collection(db, 'help_items', item.id, 'messages');
       unsubscribe = onSnapshot(
-        q,
+        messagesRef,
         (snapshot) => {
           const msgs: ChatMessage[] = [];
           snapshot.forEach((docSnap) => {
             msgs.push({ id: docSnap.id, ...docSnap.data() } as ChatMessage);
           });
-          if (msgs.length > 0) {
-            setMessages((prev) => {
-              const map = new Map<string, ChatMessage>();
-              prev.forEach((m) => map.set(m.id, m));
-              msgs.forEach((m) => map.set(m.id, m));
-              const combined = Array.from(map.values());
-              combined.sort((a, b) => a.createdAt - b.createdAt);
-              return combined;
-            });
-          }
+          msgs.sort((a, b) => a.createdAt - b.createdAt);
+          setMessages(msgs);
         },
-        () => {}
+        (err) => {
+          console.warn('[Firestore] subcollection chat listener warning:', err);
+        }
       );
     } catch (err) {}
 
     return () => {
-      clearInterval(interval);
       if (unsubscribe) unsubscribe();
+      setMessages([]);
     };
-  }, [isOpen, item]);
+  }, [isOpen, item?.id]);
 
   if (!isOpen || !item) return null;
 
@@ -99,10 +93,11 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     : 0.1; // 100 meters for dynamic
 
   const isWithinRadius = isOwner || (item.distanceKm !== undefined && item.distanceKm <= effectiveRadius);
+  const isClosed = item.status === 'completed' || item.status === 'cancelled';
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !user) return;
+    if (!inputText.trim() || !user || isClosed) return;
 
     const msgPayload = {
       id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
@@ -126,9 +121,10 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
       });
     } catch (err) {}
 
-    // 2. Post to Firestore
+    // 2. Post to dedicated Firestore subcollection
     try {
-      await addDoc(collection(db, 'help_messages'), msgPayload);
+      const sanitizedPayload = JSON.parse(JSON.stringify(msgPayload));
+      await addDoc(collection(db, 'help_items', item.id, 'messages'), sanitizedPayload);
     } catch (err) {
       console.error('Error sending Firestore message:', err);
     } finally {
@@ -138,17 +134,20 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
   const handleTakeAction = () => {
     if (!user) return;
-    if (item.type === 'request') {
-      // User is offering to help this request
-      onUpdateItemStatus(item.id, 'in_progress', user.id, user.nickname);
-    } else {
-      // User is asking help from this offer
-      onUpdateItemStatus(item.id, 'in_progress', user.id, user.nickname);
-    }
+    onUpdateItemStatus(item.id, 'in_progress', user.id, user.nickname);
   };
 
   const handleComplete = () => {
     onUpdateItemStatus(item.id, 'completed');
+  };
+
+  const handleDeleteOrClose = () => {
+    if (window.confirm('Vuoi chiudere definitivamente questo annuncio? Tutti i messaggi di questa chat dedicata verranno eliminati per sempre.')) {
+      if (onDeleteItem) {
+        onDeleteItem(item.id);
+      }
+      onClose();
+    }
   };
 
   return (
@@ -168,7 +167,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             </div>
             <h2 className="text-lg font-bold mt-1">{item.title}</h2>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors">
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -210,7 +209,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Announcement Spatial Presence Banner (Statico ancorato al luogo vs Dinamico legato alla persona) */}
+          {/* Announcement Spatial Presence Banner */}
           {item.trackingType === 'static' ? (
             <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex items-start space-x-3 text-xs">
               <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center font-bold text-sm shrink-0 mt-0.5 shadow-xs">
@@ -218,34 +217,13 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
               </div>
               <div className="space-y-1 w-full">
                 <div className="font-bold flex items-center justify-between text-amber-950">
-                  <span>Annuncio Statico (Punto Fisso nel Territorio)</span>
+                  <span>📍 Annuncio Statico (Ancorato al luogo / attività)</span>
                   <span className="bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
-                    Max 10 km consentiti
+                    Raggio: {effectiveRadius} km
                   </span>
                 </div>
-                <div className="text-xs text-amber-900 font-semibold">
-                  Sfera d'influenza impostata: <u>{item.actionRadiusKm && item.actionRadiusKm < 1 ? `${Math.round(item.actionRadiusKm * 1000)} metri` : `${item.actionRadiusKm || 1} km`}</u>
-                </div>
-                <div className="text-[11px] text-amber-800 font-medium">
-                  Indirizzo ancorato: <strong>{item.staticLocation?.comune || ''}</strong> {item.staticLocation?.via ? `• ${item.staticLocation.via}` : ''} {item.staticLocation?.civico ? `n. ${item.staticLocation.civico}` : ''}
-                </div>
-                <p className="text-[11px] leading-relaxed text-slate-700 pt-0.5">
-                  {(() => {
-                    const staticRadius = Math.min(10, Math.max(0.1, item.actionRadiusKm || 1));
-                    const isInside = item.distanceKm !== undefined && item.distanceKm <= staticRadius;
-                    const distStr = item.distanceKm !== undefined
-                      ? item.distanceKm < 1 ? `${Math.round(item.distanceKm * 1000)} metri` : `${item.distanceKm.toFixed(1)} km`
-                      : '? km';
-                    return isInside ? (
-                      <>
-                        🎯 <strong>Sei dentro la sfera d'influenza del luogo!</strong> Ti trovi a soli <strong>{distStr}</strong> da questo punto fisso (raggio massimo di {staticRadius < 1 ? Math.round(staticRadius * 1000) + ' m' : staticRadius + ' km'}). Sei sul posto ed è possibile un'interazione reale!
-                      </>
-                    ) : (
-                      <>
-                        📍 Questo annuncio è ancorato a queste coordinate con un raggio scelto di <strong>{staticRadius < 1 ? Math.round(staticRadius * 1000) + ' m' : staticRadius + ' km'}</strong> (attualmente ti trovi a {distStr}). Gli annunci statici si vedono e si attivano solo quando passi fisicamente all'interno della loro area.
-                      </>
-                    );
-                  })()}
+                <p className="text-[11px] leading-relaxed text-amber-900">
+                  Questo annuncio resta fisso all'indirizzo impostato (<strong>{item.staticLocation?.formattedAddress || item.location.address}</strong>). Gli utenti possono interagire e chattare entro un raggio di <strong>{effectiveRadius} km</strong>.
                 </p>
               </div>
             </div>
@@ -277,7 +255,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                       </>
                     ) : (
                       <>
-                        ⚡ <strong>Distanza fissa a 100 metri per incentivare incontri umani:</strong> Questo annuncio viaggia con la persona via GPS ed è configurato sul raggio fisso di 100 metri. Attualmente ti trovi a <strong>{distStr}</strong>; l'annuncio diventerà interagibile quando sarete a meno di 100 metri l'uno dall'altro.
+                        ⚡ <strong>Distanza fissa a 100 metri:</strong> Viaggia con la persona via GPS. Attualmente ti trovi a <strong>{distStr}</strong>; l'annuncio diventerà interagibile quando sarete a meno di 100 metri l'uno dall'altro.
                       </>
                     );
                   })()}
@@ -289,21 +267,21 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
           {/* Status & Actions Box */}
           <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-bold text-slate-700">Stato Attuale</div>
+              <div className="text-xs font-bold text-slate-700">Stato Annuncio</div>
               <div className="text-sm font-extrabold text-emerald-800 capitalize flex items-center space-x-1.5 mt-0.5">
                 {item.status === 'active' && <Clock className="w-4 h-4 text-amber-500" />}
                 {item.status === 'in_progress' && <HeartHandshake className="w-4 h-4 text-emerald-600 animate-pulse" />}
                 {item.status === 'completed' && <CheckCircle className="w-4 h-4 text-emerald-600" />}
                 <span>
-                  {item.status === 'active' && 'Disponibile / In attesa di aiuto'}
-                  {item.status === 'in_progress' && `In corso (Aiutante: ${item.helperNickname || 'Assegnato'})`}
+                  {item.status === 'active' && 'Attivo / In attesa di aiuto'}
+                  {item.status === 'in_progress' && `In corso con ${item.helperNickname || 'un vicino'}`}
                   {item.status === 'completed' && 'Completato con successo 🎉'}
                 </span>
               </div>
             </div>
 
             {/* Action buttons */}
-            <div>
+            <div className="flex items-center gap-2">
               {item.status === 'active' && !isOwner && (
                 isWithinRadius ? (
                   <button
@@ -316,7 +294,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 ) : (
                   <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 rounded-xl text-[11px] font-bold flex items-center space-x-1.5">
                     <span>🔒</span>
-                    <span>Fuori dal raggio d'azione (serve vicinanza)</span>
+                    <span>Fuori dal raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})</span>
                   </div>
                 )
               )}
@@ -327,14 +305,19 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                   className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-teal-700/20 transition-all flex items-center space-x-1.5 cursor-pointer"
                 >
                   <CheckCircle className="w-4 h-4" />
-                  <span>Segna come Completato & Crediti</span>
+                  <span>Segna come Concluso</span>
                 </button>
               )}
 
-              {item.status === 'completed' && (
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-xl">
-                  Aiuto Concluso ✨
-                </span>
+              {isOwner && (
+                <button
+                  onClick={handleDeleteOrClose}
+                  className="px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
+                  title="Chiude l'annuncio ed elimina definitivamente tutti i messaggi della chat"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                  <span>Chiudi Annuncio e Cancella Chat</span>
+                </button>
               )}
             </div>
           </div>
@@ -344,31 +327,41 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
               <div className="flex items-center space-x-2">
                 <MessageSquare className="w-4 h-4 text-emerald-600" />
-                <span>Coordinamento & Chat di Vicinato</span>
+                <span>Chat Dedicata a Questo Annuncio</span>
+                <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                  Effimera
+                </span>
               </div>
-              {!isWithinRadius && !isOwner && (
+              {!isWithinRadius && !isOwner && !isClosed && (
                 <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-extrabold uppercase tracking-wide">
-                  🔒 Chat sbloccabile nel raggio ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})
+                  🔒 Sbloccabile nel raggio ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})
                 </span>
               )}
             </div>
 
             <div className="flex-1 p-4 overflow-y-auto space-y-3">
-              {!isWithinRadius && !isOwner && (
+              {isClosed ? (
+                <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 text-center flex flex-col items-center justify-center py-6">
+                  <Lock className="w-6 h-6 text-slate-400 mb-1" />
+                  <div className="font-bold text-slate-800">Questo annuncio è stato chiuso</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">La chat dedicata è stata conclusa ed archiviata.</div>
+                </div>
+              ) : !isWithinRadius && !isOwner ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 flex items-start space-x-2.5">
                   <span className="text-base shrink-0">📍</span>
                   <div className="space-y-0.5">
                     <div className="font-bold">Regola di vicinanza per i messaggi:</div>
                     <div className="text-[11px] opacity-90 leading-relaxed">
-                      Puoi vedere questo annuncio ovunque, ma per inviare messaggi e metterti in contatto devi trovarti all'interno del raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat e interagire con {item.userNickname}!
+                      Puoi consultare l'annuncio da qualsiasi distanza, ma per inviare messaggi devi trovarti nel raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat e accordarti con {item.userNickname}!
                     </div>
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              {messages.length === 0 ? (
+              {!isClosed && messages.length === 0 ? (
                 <div className="text-center text-xs text-slate-400 py-6">
-                  Nessun messaggio ancora. Scrivi qui sotto per accordarti sui dettagli dell'aiuto!
+                  Nessun messaggio per questo annuncio. Scrivi qui sotto per accordarti sui dettagli!
+                  <div className="text-[10px] text-slate-400/80 mt-1">Tutti i messaggi spariranno automaticamente quando l'annuncio verrà chiuso.</div>
                 </div>
               ) : (
                 messages.map((msg) => {
@@ -392,14 +385,20 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                disabled={!isWithinRadius && !isOwner}
-                placeholder={isWithinRadius || isOwner ? "Scrivi un messaggio per coordinarti..." : `🔒 Avvicinati entro ${effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'} per mandare messaggi`}
+                disabled={isClosed || (!isWithinRadius && !isOwner)}
+                placeholder={
+                  isClosed
+                    ? "🔒 Annuncio chiuso, chat disattivata"
+                    : isWithinRadius || isOwner
+                    ? "Scrivi un messaggio dedicato per questo annuncio..."
+                    : `🔒 Avvicinati entro ${effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'} per scrivere`
+                }
                 className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
               />
               <button
                 type="submit"
-                disabled={loadingMsg || !inputText.trim() || (!isWithinRadius && !isOwner)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isClosed || loadingMsg || !inputText.trim() || (!isWithinRadius && !isOwner)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>Invia</span>
