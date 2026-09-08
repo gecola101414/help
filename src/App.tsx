@@ -141,10 +141,12 @@ export default function App() {
           setUser((prev) => {
             if (!prev) return prev;
             syncCreatorLocationToAnnouncements(prev.id, newLocation);
-            return {
+            const updated = {
               ...prev,
               location: newLocation,
             };
+            localStorage.setItem('help_user_profile', JSON.stringify(updated));
+            return updated;
           });
         },
         () => {},
@@ -205,6 +207,9 @@ export default function App() {
         if (Array.isArray(serverList)) {
           const cleanServerList = serverList.filter(i => !i.id?.startsWith('init-'));
           setItems(enrichItemsWithDistance(cleanServerList, userRef.current));
+          if (cleanServerList.length === 0) {
+            localStorage.setItem('help_items_local', JSON.stringify([]));
+          }
         }
       }
     } catch (err) {
@@ -351,6 +356,7 @@ export default function App() {
     isFree: boolean;
     trackingType?: 'dynamic' | 'static';
     actionRadiusKm?: number;
+    durationMinutes?: number;
     staticLocation?: {
       comune: string;
       via?: string;

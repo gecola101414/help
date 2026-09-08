@@ -22,39 +22,32 @@ function getStoredItems(): any[] {
       const data = fs.readFileSync(ITEMS_FILE, "utf-8");
       items = JSON.parse(data) || [];
     }
-
-    // Ensure "Guida turistica a Sanremo" is always seeded for synchronization across devices
-    const hasSanremo = items.some((i: any) => i.title?.toLowerCase().includes("sanremo"));
-    if (!hasSanremo) {
-      items.unshift({
-        id: "item_sanremo_guida_1",
-        title: "Guida turistica a Sanremo",
-        description: "Disponibile per accompagnare visitatori e turisti alla scoperta dei luoghi storici, la Pigna e la passeggiata dell'Imperatrice a Sanremo.",
-        category: "Turismo & Cultura",
-        type: "offer",
-        trackingType: "static",
-        actionRadiusKm: 5,
-        userNickname: "Marco (Sanremo)",
-        userId: "user_sanremo_1",
-        status: "active",
-        createdAt: Date.now() - 3600000,
-        staticLocation: {
-          comune: "Sanremo",
-          via: "Corso Matteotti",
-          civico: "15"
-        },
-        location: {
-          lat: 43.8158,
-          lng: 7.7761,
-          address: "Corso Matteotti, 15, Sanremo"
-        }
-      });
-      saveStoredItems(items);
-    }
     return items;
   } catch (err) {
     console.error("Error reading items file:", err);
     return [];
+  }
+}
+
+const RESET_FILE = path.join(DATA_DIR, "reset_state.json");
+function getLastResetTimestamp(): number {
+  try {
+    if (fs.existsSync(RESET_FILE)) {
+      const data = JSON.parse(fs.readFileSync(RESET_FILE, "utf-8"));
+      return data.resetAt || 0;
+    }
+  } catch {}
+  return 0;
+}
+
+function setLastResetTimestamp(ts: number) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(RESET_FILE, JSON.stringify({ resetAt: ts }, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving reset state:", err);
   }
 }
 
@@ -178,11 +171,15 @@ async function startServer() {
     if (!Array.isArray(clientItems)) {
       return res.status(400).json({ error: "Expected array of items" });
     }
+    const lastReset = getLastResetTimestamp();
     const items = getStoredItems().filter((i: any) => !i.id?.startsWith('init-'));
     let modified = false;
 
     clientItems.forEach((cItem: any) => {
       if (!cItem || !cItem.title || cItem.id?.startsWith('init-')) return;
+      // Discard items created before database reset
+      if (cItem.createdAt && cItem.createdAt < lastReset) return;
+
       const isStatic = cItem.trackingType === 'static';
       const normalizedItem = {
         ...cItem,
@@ -205,6 +202,23 @@ async function startServer() {
       broadcastItemsUpdate(items);
     }
     res.json(items);
+  });
+
+  // Reset / Clear ALL announcements from database
+  app.post("/api/help-items/reset", (req, res) => {
+    const now = Date.now();
+    setLastResetTimestamp(now);
+    saveStoredItems([]);
+    broadcastItemsUpdate([]);
+    res.json({ success: true, message: "Database annunci azzerato con successo", resetAt: now });
+  });
+
+  app.delete("/api/help-items", (req, res) => {
+    const now = Date.now();
+    setLastResetTimestamp(now);
+    saveStoredItems([]);
+    broadcastItemsUpdate([]);
+    res.json({ success: true, message: "Database annunci azzerato con successo", resetAt: now });
   });
 
   app.patch("/api/help-items/:id", (req, res) => {
@@ -267,94 +281,110 @@ async function startServer() {
     res.json({ success: true, updatedCount });
   });
 
-  // Geocoding helper for static announcements (Comune, Via, Numero Civico)
-  const ITALIAN_CITIES_FALLBACK: Record<string, { lat: number; lng: number }> = {
-    roma: { lat: 41.9028, lng: 12.4964 },
-    milano: { lat: 45.4642, lng: 9.1900 },
-    napoli: { lat: 40.8518, lng: 14.2681 },
-    torino: { lat: 45.0703, lng: 7.6869 },
-    palermo: { lat: 38.1157, lng: 13.3615 },
-    genova: { lat: 44.4056, lng: 8.9463 },
-    bologna: { lat: 44.4949, lng: 11.3426 },
-    firenze: { lat: 43.7696, lng: 11.2558 },
-    bari: { lat: 41.1171, lng: 16.8719 },
-    catania: { lat: 37.5079, lng: 15.0830 },
-    verona: { lat: 45.4384, lng: 10.9916 },
-    venezia: { lat: 45.4408, lng: 12.3155 },
-    padova: { lat: 45.4064, lng: 11.8768 },
-    trieste: { lat: 45.6495, lng: 13.7768 },
-    brescia: { lat: 45.5416, lng: 10.2118 },
-    parma: { lat: 44.8015, lng: 10.3279 },
-    savona: { lat: 44.3080, lng: 8.4810 },
-    bergamo: { lat: 45.6983, lng: 9.6773 },
-    trento: { lat: 46.0748, lng: 11.1217 },
-    bolzano: { lat: 46.4983, lng: 11.3548 },
-    ancona: { lat: 43.6158, lng: 13.5189 },
-    perugia: { lat: 43.1107, lng: 12.3908 },
-    cagliari: { lat: 39.2238, lng: 9.1217 },
-    pescara: { lat: 42.4618, lng: 14.2144 },
-    salerno: { lat: 40.6824, lng: 14.7681 },
-    rimini: { lat: 44.0678, lng: 12.5695 },
-    monza: { lat: 45.5845, lng: 9.2744 },
-    lecce: { lat: 40.3515, lng: 18.1750 },
-  };
+  // Official database of all 7,904 Italian municipalities with coordinates
+  interface ItalianComune {
+    nome: string;
+    sigla: string;
+    regione: string;
+    provincia: string;
+    cap: string;
+    lat: number;
+    lng: number;
+  }
 
+  const COMUNI_FILE = path.join(DATA_DIR, "comuni_italiani.json");
+  let comuniList: ItalianComune[] = [];
+  try {
+    if (fs.existsSync(COMUNI_FILE)) {
+      comuniList = JSON.parse(fs.readFileSync(COMUNI_FILE, "utf-8"));
+    }
+  } catch (err) {
+    console.error("Failed to load comuni_italiani.json", err);
+  }
+
+  // Comuni Autocomplete API (Search Italian municipalities)
+  app.get("/api/comuni", (req, res) => {
+    const query = (req.query.q as string || "").trim().toLowerCase();
+    if (!query || query.length < 1) {
+      return res.json([]);
+    }
+    const startsWith = comuniList.filter(c => c.nome.toLowerCase().startsWith(query));
+    const includes = comuniList.filter(c => !c.nome.toLowerCase().startsWith(query) && c.nome.toLowerCase().includes(query));
+    const results = [...startsWith, ...includes].slice(0, 20);
+    res.json(results);
+  });
+
+  // Geocoding helper with street resolution & automatic fallback to the center of the chosen Comune
   app.get("/api/geocode", async (req, res) => {
     const q = (req.query.q as string || "").trim();
-    if (!q) {
-      return res.status(400).json({ error: "Missing query parameter 'q'" });
+    const comuneName = (req.query.comune as string || "").trim();
+    const via = (req.query.via as string || "").trim();
+    const civico = (req.query.civico as string || "").trim();
+
+    // 1. Identify the chosen Comune in our official database of 7,904 Italian municipalities
+    let comuneCentroid: ItalianComune | null = null;
+    const targetComune = comuneName || q;
+    if (targetComune) {
+      const cleanComune = targetComune.toLowerCase();
+      comuneCentroid = comuniList.find(c => c.nome.toLowerCase() === cleanComune)
+        || comuniList.find(c => cleanComune.startsWith(c.nome.toLowerCase()) || c.nome.toLowerCase().startsWith(cleanComune))
+        || comuniList.find(c => cleanComune.includes(c.nome.toLowerCase()))
+        || null;
     }
 
-    try {
-      // Try Nominatim with custom user agent and timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+    // 2. If a street or specific query is provided, attempt precision geocoding via Nominatim
+    const fullStreetQuery = [via, civico, comuneCentroid ? comuneCentroid.nome : comuneName].filter(Boolean).join(", ") || q;
+    if (via || (q && q !== comuneName)) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q + ", Italia")}&format=json&limit=1&addressdetails=1`;
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "HelpCommunityPlatform/1.0",
-          "Accept-Language": "it",
-        },
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const data: any = await response.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const first = data[0];
-          return res.json({
-            lat: parseFloat(first.lat),
-            lng: parseFloat(first.lon),
-            displayName: first.display_name,
-            found: true,
-          });
-        }
-      }
-    } catch (err) {
-      console.warn("Nominatim geocoding error or timeout, checking fallback...", err);
-    }
-
-    // Fallback: Check if city is in fallback dictionary
-    const queryNormalized = q.toLowerCase();
-    for (const [cityName, coords] of Object.entries(ITALIAN_CITIES_FALLBACK)) {
-      if (queryNormalized.includes(cityName)) {
-        return res.json({
-          lat: coords.lat,
-          lng: coords.lng,
-          displayName: `${q}, Italia`,
-          found: true,
-          isFallback: true,
+        const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(fullStreetQuery + ", Italia")}&format=json&limit=1&addressdetails=1`;
+        const response = await fetch(url, {
+          headers: {
+            "User-Agent": "HelpCommunityPlatform/1.0",
+            "Accept-Language": "it",
+          },
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data: any = await response.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const first = data[0];
+            return res.json({
+              lat: parseFloat(first.lat),
+              lng: parseFloat(first.lon),
+              displayName: first.display_name,
+              found: true,
+              isStreetLevel: true,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Nominatim geocoding error or timeout, falling back to comune center...", err);
       }
     }
 
-    // Default fallback: Center of Italy
+    // 3. Fallback: Exact center of the selected municipality (Centro del Comune)
+    if (comuneCentroid) {
+      return res.json({
+        lat: comuneCentroid.lat,
+        lng: comuneCentroid.lng,
+        displayName: `Centro di ${comuneCentroid.nome} (${comuneCentroid.sigla}), Italia`,
+        found: true,
+        isComuneCenter: true,
+        comune: comuneCentroid.nome,
+        sigla: comuneCentroid.sigla,
+      });
+    }
+
+    // 4. Default fallback (Center of Italy) only if comune is unknown
     res.json({
       lat: 42.5042,
       lng: 12.5736,
-      displayName: q,
+      displayName: q || comuneName || "Italia",
       found: false,
     });
   });

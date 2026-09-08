@@ -54,7 +54,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setOffers(offers.filter((_, i) => i !== index));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nickname.trim()) {
       setError('Inserisci un nickname valido');
@@ -65,9 +65,24 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       return;
     }
 
+    let finalLat = lat;
+    let finalLng = lng;
+    if (address.trim() && (!finalLat || address !== user?.location?.address)) {
+      try {
+        const res = await fetch(`/api/geocode?q=${encodeURIComponent(address.trim())}`);
+        const data = await res.json();
+        if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
+          finalLat = data.lat;
+          finalLng = data.lng;
+        }
+      } catch (err) {
+        console.warn('Geocoding profile address error', err);
+      }
+    }
+
     onSave({
       nickname: nickname.trim(),
-      location: { lat, lng, address },
+      location: { lat: finalLat, lng: finalLng, address },
       offers,
     });
     onClose();

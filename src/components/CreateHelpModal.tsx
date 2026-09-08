@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2, Compass, Radio, Building2, Navigation, Check, Search, LocateFixed } from 'lucide-react';
 import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES } from '../types';
 
@@ -62,39 +62,118 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     message: '',
   });
 
+  // Italian Comuni Autocomplete states
+  interface ComuneItem {
+    nome: string;
+    sigla: string;
+    regione: string;
+    provincia: string;
+    cap: string;
+    lat: number;
+    lng: number;
+  }
+  const [comuneSuggestions, setComuneSuggestions] = useState<ComuneItem[]>([]);
+  const [isSearchingComuni, setIsSearchingComuni] = useState(false);
+  const [showComuneDropdown, setShowComuneDropdown] = useState(false);
+  const comuneDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (comuneDropdownRef.current && !comuneDropdownRef.current.contains(e.target as Node)) {
+        setShowComuneDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Live search for comuni as the user types
+  useEffect(() => {
+    if (!staticComune || staticComune.trim().length < 2) {
+      setComuneSuggestions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsSearchingComuni(true);
+        const res = await fetch(`/api/comuni?q=${encodeURIComponent(staticComune.trim())}`);
+        if (res.ok) {
+          const list: ComuneItem[] = await res.json();
+          setComuneSuggestions(list);
+          if (list.length > 0) {
+            setShowComuneDropdown(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Error querying comuni API', err);
+      } finally {
+        setIsSearchingComuni(false);
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [staticComune]);
+
+  const handleSelectComune = (c: ComuneItem) => {
+    setStaticComune(c.nome);
+    setStaticCoords({ lat: c.lat, lng: c.lng });
+    setStaticFormattedAddress(`${c.nome} (${c.sigla})`);
+    setShowComuneDropdown(false);
+    setGeocodeFeedback({
+      status: 'success',
+      message: `Centro del comune selezionato: ${c.nome} (${c.sigla}) - ${c.regione}`,
+    });
+  };
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleGeocodeAddress = async () => {
     if (!staticComune.trim()) {
-      setGeocodeFeedback({ status: 'error', message: 'Inserisci almeno il Comune.' });
+      setGeocodeFeedback({ status: 'error', message: 'Seleziona o scrivi almeno il Comune.' });
       return;
     }
     setIsGeocoding(true);
     setGeocodeFeedback({ status: 'idle', message: '' });
     try {
-      const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
+      const res = await fetch(
+        `/api/geocode?comune=${encodeURIComponent(staticComune.trim())}&via=${encodeURIComponent(staticVia.trim())}&civico=${encodeURIComponent(staticCivico.trim())}`
+      );
       const data = await res.json();
       if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
         setStaticCoords({ lat: data.lat, lng: data.lng });
         const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
         setStaticFormattedAddress(pretty || data.displayName);
-        setGeocodeFeedback({
-          status: 'success',
-          message: `Localizzato: ${pretty || data.displayName} (${data.lat.toFixed(4)}, ${data.lng.toFixed(4)})`,
-        });
+
+        if (data.isStreetLevel) {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `📍 Via e numero individuati con precisione: ${pretty}`,
+          });
+        } else if (data.isComuneCenter) {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `🏛️ Via non identificata sulla mappa: annuncio posizionato nel centro di ${staticComune} (${data.sigla || ''})`,
+          });
+        } else {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `📍 Posizionato: ${data.displayName}`,
+          });
+        }
       } else {
         setGeocodeFeedback({
           status: 'error',
-          message: 'Indirizzo non trovato con precisione. Verranno usate le coordinate approssimative.',
+          message: 'Impossibile identificare le coordinate.',
         });
       }
     } catch {
       setGeocodeFeedback({
         status: 'error',
-        message: 'Impossibile verificare l’indirizzo al momento.',
+        message: 'Errore di connessione durante la verifica.',
       });
     } finally {
       setIsGeocoding(false);
@@ -187,20 +266,22 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
 
     if (trackingType === 'static') {
       if (!staticComune.trim()) {
-        setError('Specifica almeno il Comune per l’annuncio statico.');
+        setError('Specifica o seleziona almeno il Comune per l’annuncio statico.');
         return;
       }
-      if (!finalCoords) {
+      if (!finalCoords || staticVia.trim()) {
         try {
-          const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
-          const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
+          const res = await fetch(
+            `/api/geocode?comune=${encodeURIComponent(staticComune.trim())}&via=${encodeURIComponent(staticVia.trim())}&civico=${encodeURIComponent(staticCivico.trim())}`
+          );
           const data = await res.json();
           if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
             finalCoords = { lat: data.lat, lng: data.lng };
-            formattedAddr = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+            const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+            formattedAddr = pretty || data.displayName;
           }
         } catch {
-          finalCoords = user?.location ? { lat: user.location.lat, lng: user.location.lng } : { lat: 45.4642, lng: 9.1900 };
+          // If network error, retain staticCoords if set
         }
       }
 
@@ -352,26 +433,54 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      Comune *
+                  <div className="sm:col-span-1 relative" ref={comuneDropdownRef}>
+                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1 flex items-center justify-between">
+                      <span>Comune d'Italia *</span>
+                      {isSearchingComuni && <Loader2 className="w-2.5 h-2.5 animate-spin text-amber-700" />}
                     </label>
                     <input
                       type="text"
                       value={staticComune}
+                      onFocus={() => {
+                        if (comuneSuggestions.length > 0) setShowComuneDropdown(true);
+                      }}
                       onChange={(e) => {
                         setStaticComune(e.target.value);
                         setStaticCoords(null);
                       }}
-                      placeholder="es. Roma, Milano..."
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                      placeholder="es. Somma Lombardo, Roma..."
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
                       required
+                      autoComplete="off"
                     />
+
+                    {/* Autocomplete Dropdown with Italian Municipalities */}
+                    {showComuneDropdown && comuneSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-56 overflow-y-auto bg-white border border-amber-300 rounded-xl shadow-2xl divide-y divide-slate-100">
+                        {comuneSuggestions.map((c) => (
+                          <button
+                            type="button"
+                            key={`${c.nome}-${c.sigla}-${c.cap}`}
+                            onClick={() => handleSelectComune(c)}
+                            className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center justify-between gap-2 transition-colors cursor-pointer text-xs"
+                          >
+                            <div className="truncate">
+                              <span className="font-bold text-slate-900">{c.nome}</span>
+                              <span className="text-[11px] text-slate-500 ml-1.5 font-semibold">({c.sigla})</span>
+                              <span className="text-[10px] text-amber-700 block truncate">{c.regione}</span>
+                            </div>
+                            <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-mono shrink-0">
+                              Centro
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="sm:col-span-1">
                     <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      Via / Piazza
+                      Via / Piazza (a mano)
                     </label>
                     <input
                       type="text"
@@ -380,14 +489,14 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                         setStaticVia(e.target.value);
                         setStaticCoords(null);
                       }}
-                      placeholder="es. Via Garibaldi"
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                      placeholder="es. Via Milano"
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
                     />
                   </div>
 
                   <div className="sm:col-span-1">
                     <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      N. Civico (opzionale)
+                      N. Civico (a mano)
                     </label>
                     <div className="flex space-x-1">
                       <input
@@ -397,15 +506,15 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                           setStaticCivico(e.target.value);
                           setStaticCoords(null);
                         }}
-                        placeholder="es. 12"
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                        placeholder="es. 96"
+                        className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
                       />
                       <button
                         type="button"
                         onClick={handleGeocodeAddress}
                         disabled={isGeocoding || !staticComune.trim()}
                         title="Verifica coordinate indirizzo"
-                        className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-lg text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer"
+                        className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-lg text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
                       >
                         {isGeocoding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                       </button>
@@ -413,15 +522,22 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                   </div>
                 </div>
 
+                <div className="text-[11px] text-amber-900 bg-amber-100/70 p-2.5 rounded-lg flex items-start gap-2 border border-amber-200">
+                  <Building2 className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="leading-tight">
+                    <strong>Suggeritore comuni:</strong> seleziona il tuo comune dalla lista per coordinate certe al 100%. Via e civico li inserisci a mano: se la via non viene identificata dalla mappa, l'annuncio verrà posizionato nel <strong>centro del comune</strong>.
+                  </div>
+                </div>
+
                 {/* Geocode result feedback */}
                 {geocodeFeedback.message && (
-                  <div className={`text-[11px] p-2 rounded-lg flex items-center space-x-1.5 ${
+                  <div className={`text-[11px] p-2.5 rounded-lg flex items-center space-x-1.5 ${
                     geocodeFeedback.status === 'success'
                       ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
                       : 'bg-red-100 text-red-900 border border-red-200'
                   }`}>
-                    {geocodeFeedback.status === 'success' && <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />}
-                    <span>{geocodeFeedback.message}</span>
+                    {geocodeFeedback.status === 'success' && <Check className="w-4 h-4 text-emerald-700 shrink-0" />}
+                    <span className="font-medium">{geocodeFeedback.message}</span>
                   </div>
                 )}
               </div>
