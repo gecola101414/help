@@ -31,7 +31,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   // Novità: vedi solo le cose dove ti trovi (l'annuncio segue l'autore e copre la tua posizione)
-  const [onlyInActionRadius, setOnlyInActionRadius] = useState<boolean>(true);
+  const [onlyInActionRadius, setOnlyInActionRadius] = useState<boolean>(false);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   // Filter items based on type, tracking mode, category, distance, creator's dynamic radius, and search query

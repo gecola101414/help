@@ -43,7 +43,7 @@ export default function App() {
     return {
       id: 'user-' + Math.random().toString(36).substring(2, 9),
       nickname: 'CittadinoSolidale',
-      location: { lat: 45.4642, lng: 9.1900, address: 'Milano, Centro (GPS)' },
+      location: { lat: 45.6836, lng: 8.7071, address: 'Somma Lombardo (VA)' },
       offers: ['Spesa e Commissioni a Domicilio', 'Piccoli Lavoretti Domestici'],
       requests: [],
       credits: 5,
@@ -55,11 +55,19 @@ export default function App() {
   });
 
   const [items, setItems] = useState<HelpItem[]>(() => {
+    // Migration check: clean up any old cached test items from previous versions
+    if (!localStorage.getItem('help_db_reset_v4')) {
+      localStorage.removeItem('help_items_local');
+      localStorage.setItem('help_db_reset_v4', 'true');
+      return [];
+    }
     const saved = localStorage.getItem('help_items_local');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((i: any) => !i.id?.startsWith('init-'));
+        }
       } catch (e) {}
     }
     return [];
@@ -278,7 +286,7 @@ export default function App() {
     };
   }, [user?.location?.lat, user?.location?.lng]);
 
-  // Firestore real-time listener (dual-channel sync)
+  // Firestore real-time listener (primary cloud database for Vercel, mobile & desktop)
   useEffect(() => {
     let unsubscribeItems: (() => void) | undefined;
 
@@ -289,42 +297,37 @@ export default function App() {
         unsubscribeItems = onSnapshot(
           collection(db, 'help_items'),
           (snapshot) => {
-            if (!snapshot.empty) {
-              const fetched: HelpItem[] = [];
-              snapshot.forEach((docSnap) => {
-                const data = docSnap.data() as HelpItem;
-                
-                // Ignora messaggi scaduti
-                const durationMs = (data.durationMinutes || 24 * 60) * 60 * 1000;
-                const isExpired = (Date.now() - data.createdAt) > durationMs;
-                if (isExpired) return;
+            const fetched: HelpItem[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data() as HelpItem;
+              
+              // Skip legacy test or expired items
+              if (data.id?.startsWith('init-')) return;
+              const durationMs = (data.durationMinutes || 24 * 60) * 60 * 1000;
+              const isExpired = (Date.now() - data.createdAt) > durationMs;
+              if (isExpired) return;
 
-                const targetCoords = data.trackingType === 'static' && data.customCoords 
-                  ? data.customCoords 
-                  : data.location;
-                const rawDist = user && targetCoords
-                  ? calculateDistance(user.location.lat, user.location.lng, targetCoords.lat, targetCoords.lng)
-                  : 1.0;
-                const dist = Number(rawDist.toFixed(3));
-                fetched.push({ id: docSnap.id, ...data, distanceKm: dist });
-              });
+              const targetCoords = data.trackingType === 'static' && data.customCoords 
+                ? data.customCoords 
+                : data.location;
+              const rawDist = userRef.current && targetCoords
+                ? calculateDistance(userRef.current.location.lat, userRef.current.location.lng, targetCoords.lat, targetCoords.lng)
+                : 1.0;
+              const dist = Number(rawDist.toFixed(3));
+              fetched.push({ ...data, id: docSnap.id, distanceKm: dist });
+            });
 
-              setItems((prev) => {
-                const map = new Map<string, HelpItem>();
-                fetched.forEach((item) => map.set(item.id, item));
-                prev.forEach((item) => {
-                  if (!map.has(item.id)) map.set(item.id, item);
-                });
-                return Array.from(map.values());
-              });
-            }
+            // Authoritative Firestore database update
+            const enriched = enrichItemsWithDistance(fetched, userRef.current);
+            setItems(enriched);
+            localStorage.setItem('help_items_local', JSON.stringify(enriched));
           },
           (err) => {
-            // Handled via server polling
+            console.warn('Firestore snapshot listener warning:', err);
           }
         );
       } catch (err) {
-        // Handled via server polling
+        console.warn('Firestore init error:', err);
       }
     }
 
@@ -432,7 +435,7 @@ export default function App() {
 
     // 2. Also save to Firestore cloud database
     try {
-      await addDoc(collection(db, 'help_items'), newItemData);
+      await setDoc(doc(db, 'help_items', newId), newItemData);
     } catch (err) {
       console.warn('Firestore write fallback:', err);
     }
@@ -564,6 +567,7 @@ export default function App() {
         onClose={() => setIsProfileOpen(false)}
         user={user}
         onSave={handleSaveProfile}
+        onResetAllItems={() => setItems([])}
       />
 
       <CreateHelpModal

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2, Compass, Radio, Building2, Navigation, Check, Search, LocateFixed } from 'lucide-react';
 import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES } from '../types';
+import { searchComuni, resolveAddressGeocode, ComuneItem } from '../services/comuniService';
 
 interface CreateHelpModalProps {
   isOpen: boolean;
@@ -63,15 +64,6 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   });
 
   // Italian Comuni Autocomplete states
-  interface ComuneItem {
-    nome: string;
-    sigla: string;
-    regione: string;
-    provincia: string;
-    cap: string;
-    lat: number;
-    lng: number;
-  }
   const [comuneSuggestions, setComuneSuggestions] = useState<ComuneItem[]>([]);
   const [isSearchingComuni, setIsSearchingComuni] = useState(false);
   const [showComuneDropdown, setShowComuneDropdown] = useState(false);
@@ -88,32 +80,34 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Live search for comuni as the user types
+  // Live search for comuni as the user types (client-side 0ms cache + static fallback for Vercel)
   useEffect(() => {
-    if (!staticComune || staticComune.trim().length < 2) {
+    if (!staticComune || staticComune.trim().length < 1) {
       setComuneSuggestions([]);
+      setShowComuneDropdown(false);
       return;
     }
 
+    let isMounted = true;
     const timer = setTimeout(async () => {
       try {
         setIsSearchingComuni(true);
-        const res = await fetch(`/api/comuni?q=${encodeURIComponent(staticComune.trim())}`);
-        if (res.ok) {
-          const list: ComuneItem[] = await res.json();
+        const list = await searchComuni(staticComune.trim(), 30);
+        if (isMounted) {
           setComuneSuggestions(list);
-          if (list.length > 0) {
-            setShowComuneDropdown(true);
-          }
+          setShowComuneDropdown(list.length > 0);
         }
       } catch (err) {
-        console.warn('Error querying comuni API', err);
+        console.warn('Error querying comuni', err);
       } finally {
-        setIsSearchingComuni(false);
+        if (isMounted) setIsSearchingComuni(false);
       }
-    }, 150);
+    }, 60);
 
-    return () => clearTimeout(timer);
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
   }, [staticComune]);
 
   const handleSelectComune = (c: ComuneItem) => {
@@ -123,7 +117,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     setShowComuneDropdown(false);
     setGeocodeFeedback({
       status: 'success',
-      message: `Centro del comune selezionato: ${c.nome} (${c.sigla}) - ${c.regione}`,
+      message: `Centro del comune selezionato: ${c.nome} (${c.sigla}), ${c.regione} (Lat: ${c.lat.toFixed(4)}, Lng: ${c.lng.toFixed(4)})`,
     });
   };
 
@@ -133,16 +127,13 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
 
   const handleGeocodeAddress = async () => {
     if (!staticComune.trim()) {
-      setGeocodeFeedback({ status: 'error', message: 'Seleziona o scrivi almeno il Comune.' });
+      setGeocodeFeedback({ status: 'error', message: 'Seleziona o scrivi prima il Comune.' });
       return;
     }
     setIsGeocoding(true);
     setGeocodeFeedback({ status: 'idle', message: '' });
     try {
-      const res = await fetch(
-        `/api/geocode?comune=${encodeURIComponent(staticComune.trim())}&via=${encodeURIComponent(staticVia.trim())}&civico=${encodeURIComponent(staticCivico.trim())}`
-      );
-      const data = await res.json();
+      const data = await resolveAddressGeocode(staticComune, staticVia, staticCivico);
       if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
         setStaticCoords({ lat: data.lat, lng: data.lng });
         const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
@@ -151,12 +142,12 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
         if (data.isStreetLevel) {
           setGeocodeFeedback({
             status: 'success',
-            message: `📍 Via e numero individuati con precisione: ${pretty}`,
+            message: `📍 Via e numero civico identificati con precisione: ${pretty}`,
           });
         } else if (data.isComuneCenter) {
           setGeocodeFeedback({
             status: 'success',
-            message: `🏛️ Via non identificata sulla mappa: annuncio posizionato nel centro di ${staticComune} (${data.sigla || ''})`,
+            message: `🏛️ Via non trovata sulla mappa: annuncio posizionato con certezza nel centro di ${staticComune}`,
           });
         } else {
           setGeocodeFeedback({
@@ -173,7 +164,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     } catch {
       setGeocodeFeedback({
         status: 'error',
-        message: 'Errore di connessione durante la verifica.',
+        message: 'Errore durante la verifica dell’indirizzo.',
       });
     } finally {
       setIsGeocoding(false);
@@ -271,17 +262,14 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       }
       if (!finalCoords || staticVia.trim()) {
         try {
-          const res = await fetch(
-            `/api/geocode?comune=${encodeURIComponent(staticComune.trim())}&via=${encodeURIComponent(staticVia.trim())}&civico=${encodeURIComponent(staticCivico.trim())}`
-          );
-          const data = await res.json();
+          const data = await resolveAddressGeocode(staticComune, staticVia, staticCivico);
           if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
             finalCoords = { lat: data.lat, lng: data.lng };
             const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
             formattedAddr = pretty || data.displayName;
           }
         } catch {
-          // If network error, retain staticCoords if set
+          // If error, retain staticCoords if set
         }
       }
 
@@ -432,114 +420,171 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-1 relative" ref={comuneDropdownRef}>
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1 flex items-center justify-between">
-                      <span>Comune d'Italia *</span>
-                      {isSearchingComuni && <Loader2 className="w-2.5 h-2.5 animate-spin text-amber-700" />}
-                    </label>
-                    <input
-                      type="text"
-                      value={staticComune}
-                      onFocus={() => {
-                        if (comuneSuggestions.length > 0) setShowComuneDropdown(true);
-                      }}
-                      onChange={(e) => {
-                        setStaticComune(e.target.value);
-                        setStaticCoords(null);
-                      }}
-                      placeholder="es. Somma Lombardo, Roma..."
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
-                      required
-                      autoComplete="off"
-                    />
+                {/* Full-width Comune Search & Selection */}
+                <div className="space-y-3">
+                  <div className="relative" ref={comuneDropdownRef}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Comune d'Italia *</span>
+                        <span className="text-[10px] font-normal text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full">
+                          Tutti i 7.904 comuni inclusi
+                        </span>
+                      </label>
+                      {isSearchingComuni && (
+                        <div className="flex items-center gap-1 text-[11px] text-amber-800 font-medium">
+                          <Loader2 className="w-3 h-3 animate-spin text-amber-700" />
+                          <span>Ricerca...</span>
+                        </div>
+                      )}
+                    </div>
 
-                    {/* Autocomplete Dropdown with Italian Municipalities */}
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={staticComune}
+                        onFocus={() => {
+                          if (comuneSuggestions.length > 0) setShowComuneDropdown(true);
+                        }}
+                        onChange={(e) => {
+                          setStaticComune(e.target.value);
+                          setStaticCoords(null);
+                        }}
+                        placeholder="Inizia a digitare il comune (es. Somma Lombardo, Gallarate, Roma, Milano...)"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border-2 border-amber-300/90 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-semibold text-slate-900 shadow-xs placeholder:text-slate-400 placeholder:font-normal"
+                        required
+                        autoComplete="off"
+                      />
+                      {staticComune && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStaticComune('');
+                            setStaticCoords(null);
+                            setComuneSuggestions([]);
+                            setShowComuneDropdown(false);
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 text-xs cursor-pointer"
+                          title="Cancella comune"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Autocomplete Dropdown with Italian Municipalities - WIDE & HIGH CONTRAST */}
                     {showComuneDropdown && comuneSuggestions.length > 0 && (
-                      <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-56 overflow-y-auto bg-white border border-amber-300 rounded-xl shadow-2xl divide-y divide-slate-100">
+                      <div className="absolute top-full left-0 right-0 z-50 mt-1.5 max-h-72 overflow-y-auto bg-white border-2 border-amber-400 rounded-2xl shadow-2xl divide-y divide-slate-100 ring-1 ring-black/10">
+                        <div className="p-2 bg-amber-50/80 text-[11px] font-bold text-amber-900 flex items-center justify-between border-b border-amber-100">
+                          <span>Seleziona il tuo comune per coordinate garantite:</span>
+                          <span className="font-mono text-amber-700">{comuneSuggestions.length} risultati</span>
+                        </div>
                         {comuneSuggestions.map((c) => (
                           <button
                             type="button"
-                            key={`${c.nome}-${c.sigla}-${c.cap}`}
+                            key={`${c.nome}-${c.sigla}-${c.cap}-${c.lat}`}
                             onClick={() => handleSelectComune(c)}
-                            className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center justify-between gap-2 transition-colors cursor-pointer text-xs"
+                            className="w-full text-left px-4 py-3 hover:bg-amber-100/60 focus:bg-amber-100/70 flex items-center justify-between gap-3 transition-colors cursor-pointer"
                           >
-                            <div className="truncate">
-                              <span className="font-bold text-slate-900">{c.nome}</span>
-                              <span className="text-[11px] text-slate-500 ml-1.5 font-semibold">({c.sigla})</span>
-                              <span className="text-[10px] text-amber-700 block truncate">{c.regione}</span>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold text-sm shrink-0 border border-amber-300 shadow-2xs">
+                                {c.sigla}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-bold text-slate-950">{c.nome}</span>
+                                  <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                                    {c.provincia ? `Prov. ${c.provincia}` : c.sigla}
+                                  </span>
+                                  {c.cap && (
+                                    <span className="text-xs text-slate-500 font-mono">
+                                      CAP {c.cap}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-amber-800 font-medium block mt-0.5">
+                                  Regione {c.regione}
+                                </span>
+                              </div>
                             </div>
-                            <span className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-mono shrink-0">
-                              Centro
-                            </span>
+                            <div className="text-right shrink-0">
+                              <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-100 text-emerald-900 px-2.5 py-1 rounded-lg font-bold border border-emerald-200">
+                                <Check className="w-3 h-3 text-emerald-700" />
+                                Centro Comune
+                              </span>
+                            </div>
                           </button>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      Via / Piazza (a mano)
-                    </label>
-                    <input
-                      type="text"
-                      value={staticVia}
-                      onChange={(e) => {
-                        setStaticVia(e.target.value);
-                        setStaticCoords(null);
-                      }}
-                      placeholder="es. Via Milano"
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      N. Civico (a mano)
-                    </label>
-                    <div className="flex space-x-1">
+                  {/* Via e Civico in dedicated comfortable row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 mb-1">
+                        Via / Piazza (a mano)
+                      </label>
                       <input
                         type="text"
-                        value={staticCivico}
+                        value={staticVia}
                         onChange={(e) => {
-                          setStaticCivico(e.target.value);
+                          setStaticVia(e.target.value);
                           setStaticCoords(null);
                         }}
-                        placeholder="es. 96"
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800"
+                        placeholder="es. Via Milano, Corso Garibaldi..."
+                        className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800 shadow-xs"
                       />
-                      <button
-                        type="button"
-                        onClick={handleGeocodeAddress}
-                        disabled={isGeocoding || !staticComune.trim()}
-                        title="Verifica coordinate indirizzo"
-                        className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-lg text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
-                      >
-                        {isGeocoding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                      </button>
+                    </div>
+
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 mb-1">
+                        N. Civico (a mano)
+                      </label>
+                      <div className="flex space-x-1.5">
+                        <input
+                          type="text"
+                          value={staticCivico}
+                          onChange={(e) => {
+                            setStaticCivico(e.target.value);
+                            setStaticCoords(null);
+                          }}
+                          placeholder="es. 96"
+                          className="w-full px-3 py-2.5 text-xs rounded-xl border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800 shadow-xs text-center"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleGeocodeAddress}
+                          disabled={isGeocoding || !staticComune.trim()}
+                          title="Verifica coordinate indirizzo o individua il centro del comune"
+                          className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2.5 rounded-xl text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+                        >
+                          {isGeocoding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                          <span className="hidden sm:inline">Verifica</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="text-[11px] text-amber-900 bg-amber-100/70 p-2.5 rounded-lg flex items-start gap-2 border border-amber-200">
-                  <Building2 className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                  <div className="leading-tight">
-                    <strong>Suggeritore comuni:</strong> seleziona il tuo comune dalla lista per coordinate certe al 100%. Via e civico li inserisci a mano: se la via non viene identificata dalla mappa, l'annuncio verrà posizionato nel <strong>centro del comune</strong>.
+                  <div className="text-[11px] text-amber-900 bg-amber-100/80 p-3 rounded-xl flex items-start gap-2.5 border border-amber-200">
+                    <Building2 className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
+                    <div className="leading-relaxed">
+                      <strong>Affidabilità garantita:</strong> il comune viene selezionato dalla lista ufficiale dei 7.904 comuni italiani. Via e civico li inserisci a mano: se la via non viene identificata dalla mappa, l'annuncio verrà posizionato con certezza nel <strong>centro del comune</strong>.
+                    </div>
                   </div>
-                </div>
 
-                {/* Geocode result feedback */}
-                {geocodeFeedback.message && (
-                  <div className={`text-[11px] p-2.5 rounded-lg flex items-center space-x-1.5 ${
-                    geocodeFeedback.status === 'success'
-                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
-                      : 'bg-red-100 text-red-900 border border-red-200'
-                  }`}>
-                    {geocodeFeedback.status === 'success' && <Check className="w-4 h-4 text-emerald-700 shrink-0" />}
-                    <span className="font-medium">{geocodeFeedback.message}</span>
-                  </div>
-                )}
+                  {/* Geocode result feedback */}
+                  {geocodeFeedback.message && (
+                    <div className={`text-xs p-3 rounded-xl flex items-center space-x-2 ${
+                      geocodeFeedback.status === 'success'
+                        ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-medium'
+                        : 'bg-red-100 text-red-950 border border-red-300 font-medium'
+                    }`}>
+                      {geocodeFeedback.status === 'success' && <Check className="w-4 h-4 text-emerald-700 shrink-0" />}
+                      <span>{geocodeFeedback.message}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
