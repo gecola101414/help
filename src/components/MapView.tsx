@@ -15,8 +15,11 @@ import {
   Sparkles,
   SlidersHorizontal,
   Check,
-  Radio
-, User } from 'lucide-react';
+  Radio,
+  User,
+  ChevronUp,
+  ChevronDown
+} from 'lucide-react';
 
 interface MapViewProps {
   items: HelpItem[];
@@ -84,6 +87,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
   // Map Filter Bar Collapsible State
   const [isFilterBarOpen, setIsFilterBarOpen] = useState<boolean>(false);
+  const [isLegendOpen, setIsLegendOpen] = useState<boolean>(true);
 
   // Filtering states
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
@@ -557,7 +561,7 @@ export const MapView: React.FC<MapViewProps> = ({
               className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-lg transition-all flex items-center space-x-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>Pubblica Aiuto</span>
+              <span>Pubblica una Gentilezza</span>
             </button>
             <button
               onClick={onUpdateLocation}
@@ -627,133 +631,158 @@ export const MapView: React.FC<MapViewProps> = ({
         )}
 
         {/* Map Legend & Integrated Filters Card (Bottom Right) */}
-        <div className="absolute bottom-4 right-4 z-20 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl border border-gray-200/90 shadow-xl space-y-2.5 text-xs w-72 sm:w-80 transition-all max-h-[85vh] overflow-y-auto">
-          {/* Header */}
-          <div className="font-bold text-gray-900 flex items-center justify-between border-b border-gray-100 pb-2">
-            <span className="text-sm font-black flex items-center gap-1.5 text-gray-900">
-              <span>🗺️</span> Legenda Mappa
-            </span>
-            <span className="text-[10px] text-gray-400 font-semibold bg-gray-100 px-2 py-0.5 rounded-full">
-              Zoom: {currentZoom}
-            </span>
-          </div>
-
-          {/* Integrated Dropdown Filters inside Legenda Card */}
-          <div className="space-y-2 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/90">
-            <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-              <span>🔍 Filtra Mappa:</span>
+        {!isLegendOpen ? (
+          <div className="absolute bottom-4 right-4 z-20">
+            <button
+              onClick={() => setIsLegendOpen(true)}
+              className="bg-white/95 backdrop-blur-md hover:bg-teal-50 text-teal-900 border border-gray-200/90 px-3.5 py-2.5 rounded-2xl shadow-xl flex items-center space-x-2 font-black text-xs transition-all active:scale-95 cursor-pointer"
+              title="Apri Legenda e Filtri Mappa"
+            >
+              <span>🗺️ Legenda Mappa</span>
               {hasActiveFilters && (
+                <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse"></span>
+              )}
+              <ChevronUp className="w-4 h-4 text-teal-600" />
+            </button>
+          </div>
+        ) : (
+          <div className="absolute bottom-4 right-4 z-20 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl border border-gray-200/90 shadow-xl space-y-2.5 text-xs w-72 sm:w-80 transition-all max-h-[85vh] overflow-y-auto animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {/* Header with Close/Minimize Icon */}
+            <div className="font-bold text-gray-900 flex items-center justify-between border-b border-gray-100 pb-2">
+              <span className="text-sm font-black flex items-center gap-1.5 text-gray-900">
+                <span>🗺️</span> Legenda Mappa
+              </span>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[10px] text-gray-400 font-semibold bg-gray-100 px-2 py-0.5 rounded-full">
+                  Zoom: {currentZoom}
+                </span>
                 <button
-                  onClick={handleResetFilters}
-                  className="text-[10px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                  onClick={() => setIsLegendOpen(false)}
+                  className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                  title="Riduci a icona"
                 >
-                  Azzera
+                  <ChevronDown className="w-4 h-4" />
                 </button>
+              </div>
+            </div>
+
+            {/* Integrated Dropdown Filters inside Legenda Card */}
+            <div className="space-y-2 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/90">
+              <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                <span>🔍 Filtra Mappa:</span>
+                {hasActiveFilters && (
+                  <button
+                    onClick={handleResetFilters}
+                    className="text-[10px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Azzera
+                  </button>
+                )}
+              </div>
+
+              {/* Tipo Annuncio Dropdown */}
+              <div>
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value as any)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">Tutte le Gentilezze ({items.length})</option>
+                  <option value="offer">🤝 Solo Offerte ({offersCount})</option>
+                  <option value="request">🆘 Solo Richieste ({requestsCount})</option>
+                  <option value="free">🎁 Solo Gratuiti ({freeCount})</option>
+                </select>
+              </div>
+
+              {/* Categoria Dropdown */}
+              <div>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">📂 Tutte le Categorie ({items.length})</option>
+                  {availableCategories.map((cat) => {
+                    const count = items.filter((i) => i.category === cat).length;
+                    return (
+                      <option key={cat} value={cat}>
+                        {cat} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Modalità Tracking Dropdown */}
+              <div>
+                <select
+                  value={filterTracking}
+                  onChange={(e) => setFilterTracking(e.target.value as any)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">🌐 Tutti i Tipi (Dinamici + Fissi)</option>
+                  <option value="dynamic">🏃 Solo Dinamici GPS ({dynamicCount})</option>
+                  <option value="static">📌 Solo Punti Fissi ({staticCount})</option>
+                </select>
+              </div>
+
+              {/* Toggles */}
+              <div className="pt-1 space-y-1 text-[11px]">
+                <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                  <span>🔗 Raggruppa 100m</span>
+                  <input
+                    type="checkbox"
+                    checked={antiOverlap}
+                    onChange={(e) => setAntiOverlap(e.target.checked)}
+                    className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                  <span>⭕ Cerchi d'influenza</span>
+                  <input
+                    type="checkbox"
+                    checked={showActionCircles}
+                    onChange={(e) => setShowActionCircles(e.target.checked)}
+                    className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Legend Items */}
+            <div className="space-y-1.5 pt-1 text-xs">
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-teal-600 inline-block shrink-0"></span>
+                <span className="text-gray-800">Offerte ({filteredItems.filter((i) => i.type === 'offer').length})</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-blue-600 inline-block shrink-0"></span>
+                <span className="text-gray-800">Richieste ({filteredItems.filter((i) => i.type === 'request').length})</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs shrink-0">📌</span>
+                <span className="text-amber-800">Punti Fissi (Area 0-10 km)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs shrink-0">🏃</span>
+                <span className="text-teal-800">Dinamici (100m fissi GPS)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs font-bold text-indigo-700 shrink-0">🔗</span>
+                <span className="text-indigo-900">Gruppi (Raggio &lt;100m)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block shrink-0"></span>
+                <span className="text-gray-800">La tua posizione GPS</span>
+              </div>
+              {antiOverlap && (
+                <div className="pt-1.5 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-extrabold">
+                  <span>✨ Raggruppamento 100m attivo</span>
+                </div>
               )}
             </div>
-
-            {/* Tipo Annuncio Dropdown */}
-            <div>
-              <select
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value as any)}
-                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
-              >
-                <option value="all">Tutte le Gentilezze ({items.length})</option>
-                <option value="offer">🤝 Solo Offerte ({offersCount})</option>
-                <option value="request">🆘 Solo Richieste ({requestsCount})</option>
-                <option value="free">🎁 Solo Gratuiti ({freeCount})</option>
-              </select>
-            </div>
-
-            {/* Categoria Dropdown */}
-            <div>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
-              >
-                <option value="all">📂 Tutte le Categorie ({items.length})</option>
-                {availableCategories.map((cat) => {
-                  const count = items.filter((i) => i.category === cat).length;
-                  return (
-                    <option key={cat} value={cat}>
-                      {cat} ({count})
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-
-            {/* Modalità Tracking Dropdown */}
-            <div>
-              <select
-                value={filterTracking}
-                onChange={(e) => setFilterTracking(e.target.value as any)}
-                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
-              >
-                <option value="all">🌐 Tutti i Tipi (Dinamici + Fissi)</option>
-                <option value="dynamic">🏃 Solo Dinamici GPS ({dynamicCount})</option>
-                <option value="static">📌 Solo Punti Fissi ({staticCount})</option>
-              </select>
-            </div>
-
-            {/* Toggles */}
-            <div className="pt-1 space-y-1 text-[11px]">
-              <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
-                <span>🔗 Raggruppa 100m</span>
-                <input
-                  type="checkbox"
-                  checked={antiOverlap}
-                  onChange={(e) => setAntiOverlap(e.target.checked)}
-                  className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
-                />
-              </label>
-              <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
-                <span>⭕ Cerchi d'influenza</span>
-                <input
-                  type="checkbox"
-                  checked={showActionCircles}
-                  onChange={(e) => setShowActionCircles(e.target.checked)}
-                  className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
-                />
-              </label>
-            </div>
           </div>
-
-          {/* Legend Items */}
-          <div className="space-y-1.5 pt-1 text-xs">
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="w-3 h-3 rounded-full bg-teal-600 inline-block shrink-0"></span>
-              <span className="text-gray-800">Offerte ({filteredItems.filter((i) => i.type === 'offer').length})</span>
-            </div>
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="w-3 h-3 rounded-full bg-blue-600 inline-block shrink-0"></span>
-              <span className="text-gray-800">Richieste ({filteredItems.filter((i) => i.type === 'request').length})</span>
-            </div>
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="text-xs shrink-0">📌</span>
-              <span className="text-amber-800">Punti Fissi (Area 0-10 km)</span>
-            </div>
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="text-xs shrink-0">🏃</span>
-              <span className="text-teal-800">Dinamici (100m fissi GPS)</span>
-            </div>
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="text-xs font-bold text-indigo-700 shrink-0">🔗</span>
-              <span className="text-indigo-900">Gruppi (Raggio &lt;100m)</span>
-            </div>
-            <div className="flex items-center space-x-2 font-medium">
-              <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block shrink-0"></span>
-              <span className="text-gray-800">La tua posizione GPS</span>
-            </div>
-            {antiOverlap && (
-              <div className="pt-1.5 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-extrabold">
-                <span>✨ Raggruppamento 100m attivo</span>
-              </div>
-            )}
-          </div>
-        </div>
+        )}
 
         {/* Cluster Expansion Modal Overlay */}
         {activeClusterModal && (

@@ -11,6 +11,7 @@ import { MyHelpSection } from './components/MyHelpSection';
 import { CommunityWall } from './components/CommunityWall';
 import { AiHelpAssistant } from './components/AiHelpAssistant';
 import { MapView } from './components/MapView';
+import { GeokindLogo } from './components/GeokindLogo';
 
 // Helper function to calculate distance in km using Haversine formula (precision down to 1 meter)
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -674,11 +675,14 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200/80 py-6 mt-12 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div>
-            <strong className="text-slate-800 font-bold">HELP</strong> — Piattaforma di Aiuto Reciproco e Convivenza Civile a 360°
+          <div className="flex items-center space-x-2">
+            <GeokindLogo size="sm" showSubtext={false} />
+            <span className="text-slate-400 font-medium">— Gentilezza & Scambio Civico Geolocalizzato</span>
           </div>
           <div className="flex items-center space-x-4">
-            <span className="text-emerald-700 font-semibold">"Solo chi aiuta può essere aiutato"</span>
+            <span className="text-teal-800 font-bold bg-teal-50 px-3 py-1 rounded-full border border-teal-100">
+              2026 @Gimondo Domenico
+            </span>
             <span>•</span>
             <span>Senza Registrazioni Obbligatorie</span>
           </div>

@@ -100,26 +100,26 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
         <div className="max-w-2xl space-y-4 relative z-10">
           <div className="inline-flex items-center space-x-2 bg-teal-800/60 border border-teal-500/40 px-3 py-1 rounded-full text-xs font-semibold">
             <Sparkles className="w-4 h-4 text-amber-300" />
-            <span>Piattaforma di Vicinato e Convivenza Civile</span>
+            <span>GEOKIND: Piattaforma di Gentilezza e Vicinato</span>
           </div>
           <h1 className="text-3xl sm:text-5xl font-black tracking-tight font-sans">
-            Aiutarsi è semplice, senza impegni né registrazioni.
+            Scambia gentilezza vicino a te, semplicemente.
           </h1>
           <p className="text-teal-100 text-sm sm:text-base leading-relaxed">
-            Condividi la tua posizione, metti a disposizione un aiuto o cerca ciò di cui hai bisogno nel raggio che preferisci. <br />
-            <strong className="text-white">Regola d'oro:</strong> Solo chi aiuta può essere aiutato.
+            Condividi la tua posizione, metti a disposizione una gentilezza o chiedi ciò di cui hai bisogno nel raggio che preferisci. <br />
+            <strong className="text-white">Autore:</strong> 2026 @Gimondo Domenico
           </p>
           <div className="pt-2 flex flex-wrap gap-3">
             <button
               onClick={onOpenCreate}
-              className="bg-white text-teal-800 hover:bg-teal-50 font-bold px-6 py-3 rounded-xl shadow-lg transition-all text-sm flex items-center space-x-2"
+              className="bg-white text-teal-800 hover:bg-teal-50 font-bold px-6 py-3 rounded-xl shadow-lg transition-all text-sm flex items-center space-x-2 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>Pubblica un Aiuto</span>
+              <span>Pubblica una Gentilezza</span>
             </button>
             <button
               onClick={onOpenProfile}
-              className="bg-teal-900/50 hover:bg-teal-900 text-white border border-teal-500/40 font-semibold px-6 py-3 rounded-xl transition-all text-sm"
+              className="bg-teal-900/50 hover:bg-teal-900 text-white border border-teal-500/40 font-semibold px-6 py-3 rounded-xl transition-all text-sm cursor-pointer"
             >
               Il Mio Profilo ({user?.nickname || 'Ospite'})
             </button>

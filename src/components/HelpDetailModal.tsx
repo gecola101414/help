@@ -114,12 +114,12 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     ? Math.min(10, Math.max(0.1, item.actionRadiusKm || 1))
     : 0.1; // 100 meters for dynamic
 
-  const isWithinRadius = isOwner || (item.distanceKm !== undefined && item.distanceKm <= effectiveRadius);
+  const isWithinRadius = item.distanceKm !== undefined && item.distanceKm <= effectiveRadius;
   const isClosed = item.status === 'completed' || item.status === 'cancelled';
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !user || isClosed) return;
+    if (!inputText.trim() || !user || isClosed || !isWithinRadius) return;
 
     const msgPayload = {
       id: 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
@@ -261,15 +261,26 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 ) : (
                   <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-2 rounded-xl text-[11px] font-bold flex items-center space-x-1.5">
                     <span>🔒</span>
-                    <span>Fuori dal raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})</span>
+                    <span>Fuori dal raggio ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})</span>
                   </div>
                 )
               )}
 
               {item.status === 'in_progress' && (isOwner || isHelper) && (
                 <button
-                  onClick={handleComplete}
-                  className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
+                  onClick={() => {
+                    if (!isWithinRadius) {
+                      alert("🔒 Presenza richiesta: devi trovarti nell'area di influenza per concludere la gentilezza sul posto.");
+                      return;
+                    }
+                    handleComplete();
+                  }}
+                  disabled={!isWithinRadius}
+                  className={`font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center space-x-1.5 ${
+                    !isWithinRadius
+                      ? 'bg-slate-200 text-slate-500 cursor-not-allowed opacity-60'
+                      : 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer'
+                  }`}
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span>Segna come Concluso</span>
@@ -289,6 +300,26 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             </div>
           </div>
 
+          {/* PRESENCE WARNING BANNER (When user is outside radius) */}
+          {!isClosed && !isWithinRadius && (
+            <div className="bg-amber-50 border-2 border-amber-300/80 rounded-2xl p-4 text-xs text-amber-950 space-y-2 shadow-xs">
+              <div className="flex items-center justify-between font-black text-amber-950">
+                <span className="flex items-center gap-1.5 text-sm">
+                  <span>📍</span> Presenza Fisica Richiesta per Interagire
+                </span>
+                <span className="text-[10px] bg-amber-200 text-amber-900 font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                  Tutti i Cittadini
+                </span>
+              </div>
+              <p className="text-xs text-amber-900 leading-relaxed font-medium">
+                Puoi consultare le informazioni della gentilezza, ma <strong>non puoi scrivere messaggi, né attivare la funzione Pizza (Audio Live)</strong> se non ti trovi nell'area di influenza ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}).
+              </p>
+              <div className="text-[11px] font-bold text-amber-800 border-t border-amber-200/80 pt-1.5 flex items-center gap-1">
+                <span>✨</span> Solo la presenza sul posto attiva la possibilità di interagire (vale anche per chi ha creato la gentilezza).
+              </div>
+            </div>
+          )}
+
           {/* Chat & Piazza Section */}
           <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col h-72 bg-slate-50">
             <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
@@ -297,14 +328,31 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 <span>Chat Dedicata</span>
               </div>
               
-              {/* PIAZZA LIVE AUDIO BUTTON (Richiesto dall'utente) */}
+              {/* PIAZZA LIVE AUDIO / FUNZIONE PIZZA BUTTON */}
               <button
-                onClick={() => setIsPiazzaOpen(true)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition-all flex items-center space-x-1.5 cursor-pointer animate-pulse"
-                title="Entra nella Piazza: stanza audio live dove tutti parlano e tutti ascoltano"
+                onClick={() => {
+                  if (!isWithinRadius) {
+                    alert("🔒 Funzione Pizza / Piazza disattivata: devi trovarti nell'area di influenza per attivare ed entrare nella stanza audio live. Solo la presenza fisica sul posto sblocca l'interazione (valido per tutti, anche per l'autore).");
+                    return;
+                  }
+                  setIsPiazzaOpen(true);
+                }}
+                disabled={!isWithinRadius}
+                className={`font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition-all flex items-center space-x-1.5 ${
+                  !isWithinRadius
+                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed opacity-60 border border-slate-300'
+                    : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer animate-pulse'
+                }`}
+                title={
+                  !isWithinRadius
+                    ? "Presenza fisica sul posto richiesta per attivare la Funzione Pizza / Piazza Live"
+                    : "Entra nella Funzione Pizza / Piazza: stanza audio live"
+                }
               >
                 <Radio className="w-3.5 h-3.5 text-indigo-200" />
-                <span>🏛️ Entra in Piazza (Audio Live)</span>
+                <span>
+                  {isWithinRadius ? '🏛️ Funzione Pizza (Audio Live)' : '🔒 Pizza Audio (Presenza Richiesta)'}
+                </span>
               </button>
             </div>
 
@@ -314,13 +362,13 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                   <Lock className="w-6 h-6 text-slate-400 mb-1" />
                   <div className="font-bold text-slate-800">Questo annuncio è stato chiuso</div>
                 </div>
-              ) : !isWithinRadius && !isOwner ? (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 flex items-start space-x-2.5">
+              ) : !isWithinRadius ? (
+                <div className="bg-amber-100/70 border border-amber-300 rounded-xl p-3 text-xs text-amber-950 flex items-start space-x-2.5">
                   <span className="text-base shrink-0">📍</span>
                   <div className="space-y-0.5">
-                    <div className="font-bold">Regola di vicinanza per i messaggi:</div>
+                    <div className="font-bold">Chat e Funzione Pizza bloccate per assenza sul posto:</div>
                     <div className="text-[11px] opacity-90 leading-relaxed">
-                      Per inviare messaggi devi trovarti nel raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat!
+                      Per inviare messaggi o parlare in live audio devi trovarti nel raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare l'interazione!
                     </div>
                   </div>
                 </div>
@@ -328,7 +376,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
               {!isClosed && messages.length === 0 ? (
                 <div className="text-center text-xs text-slate-400 py-6">
-                  Nessun messaggio. Scrivi qui sotto o entra in Piazza per parlare a voce!
+                  Nessun messaggio. Scrivi qui sotto o attiva la funzione Pizza per parlare a voce!
                 </div>
               ) : (
                 messages.map((msg) => {
@@ -352,13 +400,13 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                disabled={isClosed || (!isWithinRadius && !isOwner)}
-                placeholder={isClosed ? 'Annuncio chiuso' : (!isWithinRadius && !isOwner) ? 'Fuori raggio chat' : 'Scrivi un messaggio...'}
+                disabled={isClosed || !isWithinRadius}
+                placeholder={isClosed ? 'Annuncio chiuso' : !isWithinRadius ? '🔒 Fuori area - Presenza sul posto richiesta' : 'Scrivi un messaggio...'}
                 className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-50"
               />
               <button
                 type="submit"
-                disabled={isClosed || (!isWithinRadius && !isOwner) || !inputText.trim()}
+                disabled={isClosed || !isWithinRadius || !inputText.trim()}
                 className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
               >
                 <Send className="w-3.5 h-3.5" />

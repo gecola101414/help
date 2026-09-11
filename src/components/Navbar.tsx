@@ -1,6 +1,7 @@
 import React from 'react';
 import { HeartHandshake, MapPin, Coins, User, Sparkles, MessageSquare, Compass, ShieldCheck } from 'lucide-react';
 import { UserProfile } from '../types';
+import { GeokindLogo } from './GeokindLogo';
 
 interface NavbarProps {
   user: UserProfile | null;
@@ -27,18 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="flex items-center justify-between h-16">
           
           {/* Logo & Brand */}
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('feed')}>
-            <div className="w-10 h-10 rounded-xl bg-teal-600 flex items-center justify-center text-white font-black text-xl shadow-md shadow-teal-600/20">
-              H
-            </div>
-            <div>
-              <div className="flex items-center space-x-1.5">
-                <span className="font-black text-2xl tracking-tighter text-gray-900 font-sans">HELP</span>
-                <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-100">Civile</span>
-              </div>
-              <p className="text-xs text-gray-400 hidden sm:block">Aiuto reciproco e vicinato solidale</p>
-            </div>
-          </div>
+          <GeokindLogo onClick={() => setActiveTab('feed')} />
 
           {/* Navigation Tabs */}
           <nav className="hidden md:flex items-center space-x-1 bg-gray-100/80 p-1 rounded-xl">
@@ -121,9 +111,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Post Help Button */}
             <button
               onClick={onOpenCreate}
-              className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-xl shadow-lg shadow-teal-100 text-sm transition-all flex items-center space-x-1.5 active:scale-95"
+              className="bg-teal-600 hover:bg-teal-700 text-white font-bold px-4 py-2 rounded-xl shadow-lg shadow-teal-100 text-xs sm:text-sm transition-all flex items-center space-x-1.5 active:scale-95 cursor-pointer shrink-0"
             >
-              <span>+ Pubblica Aiuto</span>
+              <span>+ Pubblica una Gentilezza</span>
             </button>
 
             {/* Profile Button */}

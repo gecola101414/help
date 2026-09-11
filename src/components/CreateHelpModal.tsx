@@ -309,10 +309,10 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold">Pubblica su HELP</h2>
-            <p className="text-xs text-emerald-100 mt-1">Condividi un aiuto o esponi la tua esigenza</p>
+            <h2 className="text-xl font-bold">Pubblica su GEOKIND</h2>
+            <p className="text-xs text-emerald-100 mt-1">Pubblica una gentilezza o poni una richiesta alla community</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors">
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -337,7 +337,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               }`}
             >
               <HeartHandshake className="w-4 h-4" />
-              <span>Offro Aiuto (Metto a disp.)</span>
+              <span>Offro una Gentilezza</span>
             </button>
             <button
               type="button"
@@ -349,7 +349,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               }`}
             >
               <HelpCircle className="w-4 h-4" />
-              <span>Ho Bisogno di Aiuto</span>
+              <span>Chiedo una Gentilezza</span>
             </button>
           </div>
 

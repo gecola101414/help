@@ -210,7 +210,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold flex items-center gap-2">
-              <span>Il Tuo Accreditamento HELP</span>
+              <span>Il Tuo Accreditamento GEOKIND</span>
               <span className="text-[10px] bg-emerald-700/80 px-2 py-0.5 rounded-full uppercase tracking-wider font-extrabold border border-emerald-400/40">
                 Libero & Aperto
               </span>
