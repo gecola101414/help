@@ -35,6 +35,29 @@ interface PositionedItem {
   isDisplaced: boolean;
 }
 
+const getCategorySymbol = (catName: string) => {
+  const c = (catName || '').toLowerCase();
+  if (c.includes('spesa') || c.includes('commissioni')) return '🛒';
+  if (c.includes('domestici') || c.includes('lavoretti')) return '🔧';
+  if (c.includes('compagnia') || c.includes('assistenza')) return '☕';
+  if (c.includes('digital') || c.includes('informatico')) return '💻';
+  if (c.includes('riparazione') || c.includes('bici')) return '🚲';
+  if (c.includes('ripetizioni') || c.includes('studio')) return '📚';
+  if (c.includes('burocrazia') || c.includes('pratiche')) return '📄';
+  if (c.includes('trasporto') || c.includes('passaggio')) return '🚗';
+  if (c.includes('animali') || c.includes('pet')) return '🐾';
+  if (c.includes('utensili') || c.includes('attrezzi')) return '🔨';
+  return '💡';
+};
+
+interface PositionedCluster {
+  id: string;
+  lat: number;
+  lng: number;
+  items: HelpItem[];
+  isCluster: boolean;
+}
+
 export const MapView: React.FC<MapViewProps> = ({
   items,
   user,
@@ -53,6 +76,14 @@ export const MapView: React.FC<MapViewProps> = ({
   const hasInitializedViewRef = useRef(false);
 
   const [currentZoom, setCurrentZoom] = useState<number>(12);
+  const [activeClusterModal, setActiveClusterModal] = useState<HelpItem[] | null>(null);
+
+  // Modal local filter states
+  const [modalFilterType, setModalFilterType] = useState<'all' | 'offer' | 'request'>('all');
+  const [modalSelectedCategory, setModalSelectedCategory] = useState<string>('all');
+
+  // Map Filter Bar Collapsible State
+  const [isFilterBarOpen, setIsFilterBarOpen] = useState<boolean>(false);
 
   // Filtering states
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
@@ -120,23 +151,21 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   }, [items, filterType, filterTracking, selectedCategory, searchQuery, onlyInActionRadius]);
 
-  // Compute positioned items with intelligent anti-overlap de-clustering
-  const positionedItems: PositionedItem[] = useMemo(() => {
-    if (!antiOverlap) {
-      return filteredItems
-        .filter((item) => item.location && item.location.lat && item.location.lng)
-        .map((item) => ({
-          item,
-          displayLat: item.location.lat,
-          displayLng: item.location.lng,
-          isDisplaced: false,
-        }));
-    }
-
-    // Group items that are within ~60 meters of each other (prevents visual stacking)
+  // Compute positioned clusters for announcements within 100m radius
+  const positionedClusters: PositionedCluster[] = useMemo(() => {
     const validItems = filteredItems.filter(
       (item) => item.location && item.location.lat && item.location.lng
     );
+
+    if (!antiOverlap) {
+      return validItems.map((item) => ({
+        id: item.id,
+        lat: item.location.lat,
+        lng: item.location.lng,
+        items: [item],
+        isCluster: false,
+      }));
+    }
 
     const clusters: HelpItem[][] = [];
 
@@ -145,7 +174,8 @@ export const MapView: React.FC<MapViewProps> = ({
         const ref = cluster[0];
         const dLat = Math.abs(ref.location.lat - item.location.lat);
         const dLng = Math.abs(ref.location.lng - item.location.lng);
-        return dLat < 0.00065 && dLng < 0.00085;
+        // ~100 meters threshold (~0.0009 degrees)
+        return dLat < 0.0009 && dLng < 0.0011;
       });
 
       if (existingCluster) {
@@ -155,40 +185,49 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    const result: PositionedItem[] = [];
-
-    clusters.forEach((cluster) => {
+    return clusters.map((cluster, idx) => {
+      const baseLat = cluster[0].location.lat;
+      const baseLng = cluster[0].location.lng;
       if (cluster.length === 1) {
-        result.push({
-          item: cluster[0],
-          displayLat: cluster[0].location.lat,
-          displayLng: cluster[0].location.lng,
-          isDisplaced: false,
-        });
+        return {
+          id: cluster[0].id,
+          lat: baseLat,
+          lng: baseLng,
+          items: cluster,
+          isCluster: false,
+        };
       } else {
-        // Fan out radially so every marker is independently visible and clickable
-        const count = cluster.length;
-        const baseLat = cluster[0].location.lat;
-        const baseLng = cluster[0].location.lng;
-        const radius = 0.00045 * Math.min(1.4, Math.sqrt(count / 2));
-
-        cluster.forEach((item, index) => {
-          const angle = (index * 2 * Math.PI) / count - Math.PI / 2;
-          const displayLat = baseLat + Math.cos(angle) * radius;
-          const displayLng = baseLng + Math.sin(angle) * (radius * 1.35);
-
-          result.push({
-            item,
-            displayLat,
-            displayLng,
-            isDisplaced: true,
-          });
-        });
+        return {
+          id: `cluster-${idx}-${baseLat}-${baseLng}`,
+          lat: baseLat,
+          lng: baseLng,
+          items: cluster,
+          isCluster: true,
+        };
       }
     });
-
-    return result;
   }, [filteredItems, antiOverlap]);
+
+  // Categories available inside the open cluster modal
+  const clusterCategories = useMemo(() => {
+    if (!activeClusterModal) return [];
+    const set = new Set<string>();
+    activeClusterModal.forEach((i) => {
+      if (i.category) set.add(i.category);
+    });
+    return Array.from(set);
+  }, [activeClusterModal]);
+
+  // Filtered items inside the open cluster modal
+  const filteredClusterItems = useMemo(() => {
+    if (!activeClusterModal) return [];
+    return activeClusterModal.filter((item) => {
+      if (modalFilterType === 'offer' && item.type !== 'offer') return false;
+      if (modalFilterType === 'request' && item.type !== 'request') return false;
+      if (modalSelectedCategory !== 'all' && item.category !== modalSelectedCategory) return false;
+      return true;
+    });
+  }, [activeClusterModal, modalFilterType, modalSelectedCategory]);
 
   const hasActiveFilters = filterType !== 'all' || selectedCategory !== 'all' || searchQuery.trim().length > 0;
 
@@ -301,7 +340,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   }, [userLat, userLng, user?.location?.address]);
 
-  // 3. Update Item Markers with filtered and positioned items (Zero auto-pan/reset)
+  // 3. Update Item Markers with filtered and positioned clusters (Zero auto-pan/reset)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -313,119 +352,159 @@ export const MapView: React.FC<MapViewProps> = ({
     circlesRef.current = [];
     itemMarkersMapRef.current.clear();
 
-    // Render positioned items
-    positionedItems.forEach(({ item, displayLat, displayLng, isDisplaced }) => {
-      const isOffer = item.type === 'offer';
-      const isStatic = item.trackingType === 'static';
-      
-      // Color and visual identity:
-      // Static: warm amber/orange (#d97706)
-      // Dynamic offer: teal (#0d9488)
-      // Dynamic request: blue (#2563eb)
-      const bgColor = isStatic
-        ? (isOffer ? '#d97706' : '#b45309')
-        : (isOffer ? '#0d9488' : '#2563eb');
-      
-      const emoji = isStatic
-        ? '📌'
-        : (isOffer ? '🤝' : '🆘');
+    // Render positioned clusters
+    positionedClusters.forEach(({ id, lat, lng, items: clusterItems, isCluster }) => {
+      if (!isCluster) {
+        const item = clusterItems[0];
+        const isOffer = item.type === 'offer';
+        const isStatic = item.trackingType === 'static';
+        
+        const bgColor = isStatic
+          ? (isOffer ? '#d97706' : '#b45309')
+          : (isOffer ? '#0d9488' : '#2563eb');
+        
+        const emoji = isStatic
+          ? '📌'
+          : (isOffer ? '🤝' : '🆘');
 
-      // Draw Action Radius Circle (100 metri fissi per dinamici, fino a 10 km per statici)
-      if (showActionCircles && item.location?.lat) {
-        const radiusMeters = isStatic
-          ? Math.min(10000, Math.max(100, (item.actionRadiusKm || 1) * 1000))
-          : 100; // 100 metri fissi per incentivare l'interazione umana diretta
+        // Draw Action Radius Circle
+        if (showActionCircles && item.location?.lat) {
+          const radiusMeters = isStatic
+            ? Math.min(10000, Math.max(100, (item.actionRadiusKm || 1) * 1000))
+            : 100;
 
-        const circle = L.circle([item.location.lat, item.location.lng], {
-          radius: radiusMeters,
-          color: bgColor,
-          fillColor: bgColor,
-          fillOpacity: isStatic ? 0.08 : 0.16,
-          weight: isStatic ? 2 : 2.5,
-          dashArray: isStatic ? '4, 4' : undefined,
-        }).addTo(map);
-        circlesRef.current.push(circle);
-      }
-
-      let customIcon: L.DivIcon;
-
-      if (markerStyle === 'compact') {
-        // Compact circular badge
-        customIcon = L.divIcon({
-          className: 'custom-help-marker-compact',
-          html: `<div style="background-color: ${bgColor}; color: white; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: transform 0.15s ease;" title="${item.title}">
-            ${emoji}
-          </div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-        });
-      } else {
-        // Full pill marker with title and dynamic/static indicator
-        customIcon = L.divIcon({
-          className: 'custom-help-marker-pill',
-          html: `<div style="background-color: ${bgColor}; color: white; padding: 5px 9px; border-radius: 14px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.25); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer; max-width: 175px; overflow: hidden; text-overflow: ellipsis;">
-            <span>${emoji}</span>
-            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.title.substring(0, 18)}</span>
-          </div>`,
-          iconSize: [135, 32],
-          iconAnchor: [67, 16],
-        });
-      }
-
-      const marker = L.marker([displayLat, displayLng], { icon: customIcon }).addTo(map);
-
-      // Raise marker on hover so it sits on top of any neighbors
-      marker.on('mouseover', () => {
-        marker.setZIndexOffset(1000);
-      });
-      marker.on('mouseout', () => {
-        marker.setZIndexOffset(0);
-      });
-
-      marker.on('click', () => {
-        onSelectItem(item);
-      });
-
-      const distText = item.distanceKm !== undefined
-        ? item.distanceKm < 0.1
-          ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
-          : item.distanceKm < 1
-          ? `${Math.round(item.distanceKm * 1000)} m da te`
-          : `${item.distanceKm.toFixed(1)} km da te`
-        : '';
-
-      const popupContent = document.createElement('div');
-      popupContent.style.fontFamily = 'sans-serif';
-      popupContent.style.padding = '6px';
-      popupContent.style.minWidth = '230px';
-      popupContent.innerHTML = `
-        <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${bgColor}; margin-bottom: 2px;">
-          ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Offerta Dinamica (Segue persona)' : '🏃 Richiesta Dinamica (Segue persona)')}
-        </div>
-        <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${item.title}</div>
-        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} ${distText ? `• <strong>${distText}</strong>` : ''}</div>
-        <div style="font-size: 11px; color: ${isStatic ? '#92400e' : '#0f766e'}; background-color: ${isStatic ? '#fffbeb' : '#f0fdfa'}; border: 1px solid ${isStatic ? '#fde68a' : '#ccfbf1'}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4;">
-          ${isStatic
-            ? `📌 <strong>Punto Fisso:</strong> Area d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (Math.round(item.actionRadiusKm * 1000)) + ' m' : item.actionRadiusKm + ' km') : '1 km'}</strong> (max 10 km). Visibile solo passando sul posto.`
-            : `🏃 <strong>Dinamico (Segue ${item.userNickname}):</strong> Distanza fissa <strong>100 metri</strong> per stimolare l'interazione umana diretta.`
-          }
-        </div>
-        <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
-        ${isDisplaced ? '<div style="font-size: 10px; color: #0d9488; background-color: #f0fdf4; padding: 2px 6px; border-radius: 4px; margin-bottom: 8px; display: inline-block;">📍 Posizione distanziata per leggibilità</div>' : ''}
-        <button id="popup-btn-${item.id}" style="background-color: ${bgColor}; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
-      `;
-
-      marker.bindPopup(popupContent);
-
-      marker.on('popupopen', () => {
-        const btn = document.getElementById(`popup-btn-${item.id}`);
-        if (btn) {
-          btn.onclick = () => onSelectItem(item);
+          const circle = L.circle([item.location.lat, item.location.lng], {
+            radius: radiusMeters,
+            color: bgColor,
+            fillColor: bgColor,
+            fillOpacity: isStatic ? 0.08 : 0.16,
+            weight: isStatic ? 2 : 2.5,
+            dashArray: isStatic ? '4, 4' : undefined,
+          }).addTo(map);
+          circlesRef.current.push(circle);
         }
-      });
 
-      markersRef.current.push(marker);
-      itemMarkersMapRef.current.set(item.id, marker);
+        let customIcon: L.DivIcon;
+
+        // Lightweight Single Marker: Clean circular badge showing ONLY category symbol
+        customIcon = L.divIcon({
+          className: 'custom-help-marker-single',
+          html: `<div style="background-color: ${bgColor}; color: white; width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; transition: transform 0.15s ease;" title="${item.title}">
+            ${getCategorySymbol(item.category)}
+          </div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        });
+
+        const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+
+        marker.on('mouseover', () => {
+          marker.setZIndexOffset(1000);
+        });
+        marker.on('mouseout', () => {
+          marker.setZIndexOffset(0);
+        });
+
+        marker.on('click', () => {
+          onSelectItem(item);
+        });
+
+        const distText = item.distanceKm !== undefined
+          ? item.distanceKm < 0.1
+            ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
+            : item.distanceKm < 1
+            ? `${Math.round(item.distanceKm * 1000)} m da te`
+            : `${item.distanceKm.toFixed(1)} km da te`
+          : '';
+
+        const popupContent = document.createElement('div');
+        popupContent.style.fontFamily = 'sans-serif';
+        popupContent.style.padding = '6px';
+        popupContent.style.minWidth = '230px';
+        popupContent.innerHTML = `
+          <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${bgColor}; margin-bottom: 2px;">
+            ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Disponibilità Dinamica' : '🏃 Richiesta Dinamica')}
+          </div>
+          <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${getCategorySymbol(item.category)} ${item.title}</div>
+          <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} ${distText ? `• <strong>${distText}</strong>` : ''}</div>
+          <div style="font-size: 11px; color: ${isStatic ? '#92400e' : (isOffer ? '#9f1239' : '#1e40af')}; background-color: ${isStatic ? '#fffbeb' : (isOffer ? '#fff1f2' : '#eff6ff')}; border: 1px solid ${isStatic ? '#fde68a' : (isOffer ? '#fecdd3' : '#bfdbfe')}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4;">
+            ${isStatic
+              ? `📌 <strong>Punto Fisso:</strong> Area d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (Math.round(item.actionRadiusKm * 1000)) + ' m' : item.actionRadiusKm + ' km') : '1 km'}</strong> (max 10 km).`
+              : `🏃 <strong>Dinamico (Segue ${item.userNickname}):</strong> Distanza fissa <strong>100 metri</strong> per stimolare l'interazione umana diretta.`
+            }
+          </div>
+          <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
+          <button id="popup-btn-${item.id}" style="background-color: ${bgColor}; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
+        `;
+
+        marker.bindPopup(popupContent);
+
+        marker.on('popupopen', () => {
+          const btn = document.getElementById(`popup-btn-${item.id}`);
+          if (btn) {
+            btn.onclick = () => onSelectItem(item);
+          }
+        });
+
+        markersRef.current.push(marker);
+        itemMarkersMapRef.current.set(item.id, marker);
+      } else {
+        // Lightweight Cluster Union Marker (Removed 'Gruppo' text, icon 🔗 + count + emojis)
+        const count = clusterItems.length;
+        const emojisPreview = Array.from(new Set(clusterItems.map(i => getCategorySymbol(i.category)))).slice(0, 3).join(' ');
+
+        // Draw Group Action Radius Circle
+        if (showActionCircles && lat && lng) {
+          const staticRadii = clusterItems
+            .filter((i) => i.trackingType === 'static')
+            .map((i) => Math.min(10000, Math.max(100, (i.actionRadiusKm || 1) * 1000)));
+
+          let groupRadiusMeters = 150;
+          if (staticRadii.length > 0) {
+            groupRadiusMeters = Math.max(...staticRadii);
+          } else {
+            groupRadiusMeters = Math.min(300, 150 + (clusterItems.length - 1) * 25);
+          }
+
+          const groupCircle = L.circle([lat, lng], {
+            radius: groupRadiusMeters,
+            color: '#6366f1',
+            fillColor: '#8b5cf6',
+            fillOpacity: 0.14,
+            weight: 2,
+            dashArray: '5, 5',
+          }).addTo(map);
+          circlesRef.current.push(groupCircle);
+        }
+
+        const clusterIcon = L.divIcon({
+          className: 'custom-help-cluster-marker',
+          html: `<div style="background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; padding: 4px 9px; border-radius: 20px; font-size: 13px; font-weight: 800; white-space: nowrap; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.45); border: 2.5px solid white; display: flex; align-items: center; gap: 5px; cursor: pointer;" title="${count} gentilezze raggruppate in raggio 100m">
+            <span style="font-size: 14px;">🔗</span>
+            <span style="background: rgba(255,255,255,0.25); padding: 1px 6px; border-radius: 12px; font-size: 12px; font-weight: 900;">${count}</span>
+            <span style="font-size: 12px;">${emojisPreview}</span>
+          </div>`,
+          iconSize: [80, 32],
+          iconAnchor: [40, 16],
+        });
+
+        const clusterMarker = L.marker([lat, lng], { icon: clusterIcon }).addTo(map);
+
+        clusterMarker.on('mouseover', () => {
+          clusterMarker.setZIndexOffset(1000);
+        });
+        clusterMarker.on('mouseout', () => {
+          clusterMarker.setZIndexOffset(0);
+        });
+
+        clusterMarker.on('click', () => {
+          setModalFilterType('all');
+          setModalSelectedCategory('all');
+          setActiveClusterModal(clusterItems);
+        });
+
+        markersRef.current.push(clusterMarker);
+      }
     });
 
     // ONLY on first initial load, frame all markers once
@@ -444,7 +523,7 @@ export const MapView: React.FC<MapViewProps> = ({
         map.setView([userLat, userLng], 12);
       }
     }
-  }, [positionedItems, markerStyle, showActionCircles, onSelectItem]);
+  }, [positionedClusters, markerStyle, showActionCircles, onSelectItem, antiOverlap]);
 
   // Focus specific item on customer click
   const handleFocusItem = (item: HelpItem) => {
@@ -464,342 +543,33 @@ export const MapView: React.FC<MapViewProps> = ({
   const staticCount = items.filter((i) => i.trackingType === 'static').length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 animate-in fade-in duration-300">
-      {/* Top Header Card */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-            <span>🗺️</span> Mappa Interattiva di Vicinato
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Naviga liberamente sulla mappa: vedi sia annunci dinamici (in movimento con l'autore) sia annunci statici (punti fissi con raggio di influenza).
-          </p>
-        </div>
-        <div className="flex items-center flex-wrap gap-2">
-          <button
-            onClick={handleFitAll}
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Inquadra tutti i pin sulla mappa"
-          >
-            <Maximize2 className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Inquadra Tutti</span>
-          </button>
-          <button
-            onClick={handleCenterUser}
-            className="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Centra la mappa sulla tua posizione attuale"
-          >
-            <Crosshair className="w-3.5 h-3.5 text-teal-600" />
-            <span>La Mia Posizione</span>
-          </button>
-          <button
-            onClick={onUpdateLocation}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Rileva nuovamente le coordinate GPS"
-          >
-            <Navigation className="w-3.5 h-3.5 text-teal-600" />
-            <span>Aggiorna GPS</span>
-          </button>
-          <button
-            onClick={onOpenCreate}
-            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Pubblica Aiuto</span>
-          </button>
-        </div>
-      </div>
+    <div className="w-full h-[calc(100vh-80px)] min-h-[680px] p-2 sm:p-4 animate-in fade-in duration-300">
+      {/* Map Container - Full Screen & Clean */}
+      <div className="w-full h-full bg-white rounded-3xl border border-gray-200 shadow-md overflow-hidden relative">
+        <div ref={mapContainerRef} className="w-full h-full z-10" />
 
-      {/* Map Filter Control Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Filter Type & Tracking Pills */}
-          <div className="flex items-center flex-wrap gap-1.5">
-            <span className="text-xs font-bold text-gray-500 mr-1 flex items-center gap-1">
-              <Filter className="w-3.5 h-3.5 text-teal-600" /> Modalità:
-            </span>
+        {/* Top Right Floating Action & Navigation Controls */}
+        <div className="absolute top-4 right-4 z-20 flex flex-col items-end space-y-2">
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setFilterTracking('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filterTracking === 'all'
-                  ? 'bg-gray-900 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
+              onClick={onOpenCreate}
+              className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-lg transition-all flex items-center space-x-1.5 cursor-pointer"
             >
-              Tutti ({items.length})
+              <Plus className="w-3.5 h-3.5" />
+              <span>Pubblica Aiuto</span>
             </button>
             <button
-              onClick={() => setFilterTracking('dynamic')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterTracking === 'dynamic'
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200'
-              }`}
-              title="Annunci che seguono la persona via GPS"
+              onClick={onUpdateLocation}
+              className="bg-white/95 backdrop-blur-md hover:bg-gray-100 text-gray-800 border border-gray-200 text-xs font-bold px-3 py-2 rounded-xl shadow-md transition-all flex items-center space-x-1 cursor-pointer"
+              title="Aggiorna Posizione GPS"
             >
-              <Radio className="w-3 h-3 text-current animate-pulse" />
-              <span>In Movimento</span>
-              <span className="opacity-80 text-[10px]">({dynamicCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterTracking('static')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterTracking === 'static'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
-              }`}
-              title="Annunci fissati a un indirizzo con raggio di influenza"
-            >
-              <span>📌 Punti Fissi</span>
-              <span className="opacity-80 text-[10px]">({staticCount})</span>
-            </button>
-
-            <span className="text-gray-300 mx-1">|</span>
-
-            <button
-              onClick={() => setFilterType(filterType === 'offer' ? 'all' : 'offer')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'offer'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🤝 Offerte</span>
-              <span className="opacity-80 text-[10px]">({offersCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterType(filterType === 'request' ? 'all' : 'request')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'request'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🆘 Richieste</span>
-              <span className="opacity-80 text-[10px]">({requestsCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterType(filterType === 'free' ? 'all' : 'free')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'free'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🎁 Gratuiti</span>
-              <span className="opacity-80 text-[10px]">({freeCount})</span>
+              <Navigation className="w-3.5 h-3.5 text-teal-600" />
+              <span>GPS</span>
             </button>
           </div>
 
-          {/* Marker Display and Anti-Overlap Controls */}
-          <div className="flex items-center flex-wrap gap-2 text-xs">
-            {/* View Mode Toggle */}
-            <div className="flex items-center bg-gray-100 p-0.5 rounded-xl border border-gray-200">
-              <button
-                type="button"
-                onClick={() => setMarkerStyle('pill')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  markerStyle === 'pill'
-                    ? 'bg-white text-gray-900 shadow-xs font-bold'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-                title="Mostra cartellini con titolo"
-              >
-                Cartellini
-              </button>
-              <button
-                type="button"
-                onClick={() => setMarkerStyle('compact')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  markerStyle === 'compact'
-                    ? 'bg-white text-teal-700 shadow-xs font-bold'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-                title="Mostra icone compatte per evitare sovrapposizioni visive"
-              >
-                Icone Compatte
-              </button>
-            </div>
-
-            {/* Anti-Overlap Checkbox */}
-            <button
-              type="button"
-              onClick={() => setAntiOverlap(!antiOverlap)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                antiOverlap
-                  ? 'bg-teal-50 border-teal-200 text-teal-800 font-bold'
-                  : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}
-              title="Separa radialmente gli annunci con coordinate identiche o vicine"
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] text-white ${
-                  antiOverlap ? 'bg-teal-600' : 'bg-gray-300'
-                }`}
-              >
-                {antiOverlap && <Check className="w-2.5 h-2.5" />}
-              </div>
-              <span>Separa vicini</span>
-            </button>
-
-            {/* Action Radius Circles Toggle */}
-            <button
-              type="button"
-              onClick={() => setShowActionCircles(!showActionCircles)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                showActionCircles
-                  ? 'bg-teal-50 border-teal-200 text-teal-800 font-bold'
-                  : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}
-              title="Mostra i cerchi del raggio di disponibilità impostati dagli autori"
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] text-white ${
-                  showActionCircles ? 'bg-teal-600' : 'bg-gray-300'
-                }`}
-              >
-                {showActionCircles && <Check className="w-2.5 h-2.5" />}
-              </div>
-              <span>Bolle d'Azione</span>
-            </button>
-
-            {/* Only In Action Radius Toggle */}
-            <button
-              type="button"
-              onClick={() => setOnlyInActionRadius(!onlyInActionRadius)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                onlyInActionRadius
-                  ? 'bg-teal-700 border-teal-700 text-white font-bold shadow-xs'
-                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
-              }`}
-              title="Mostra solo gli annunci la cui sfera di disponibilità copre la tua posizione GPS"
-            >
-              <Radio className={`w-3.5 h-3.5 ${onlyInActionRadius ? 'text-teal-200 animate-pulse' : 'text-gray-400'}`} />
-              <span>{onlyInActionRadius ? '🎯 Coprono dove sono' : '🌐 Tutti gli annunci'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Second Row: Category & Search Keyword */}
-        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 border-t border-gray-100">
-          {/* Category Dropdown */}
-          <div className="w-full sm:w-64">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full text-xs font-medium bg-gray-50 hover:bg-gray-100 focus:bg-white border border-gray-200 rounded-xl px-3 py-2 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all cursor-pointer"
-            >
-              <option value="all">📂 Tutte le Categorie ({items.length})</option>
-              {availableCategories.map((cat) => {
-                const count = items.filter((i) => i.category === cat).length;
-                return (
-                  <option key={cat} value={cat}>
-                    {cat} ({count})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          {/* Search Query Input */}
-          <div className="relative w-full sm:flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Cerca per titolo, descrizione o autore..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-xs bg-gray-50 hover:bg-gray-100 focus:bg-white border border-gray-200 rounded-xl pl-9 pr-8 py-2 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Active Filter Badge and Reset */}
-          {hasActiveFilters && (
-            <div className="flex items-center space-x-2 shrink-0">
-              <span className="text-xs font-semibold text-teal-800 bg-teal-50 px-2.5 py-1.5 rounded-xl border border-teal-100">
-                Mostrati: {positionedItems.length} su {items.length}
-              </span>
-              <button
-                onClick={handleResetFilters}
-                className="text-xs text-rose-600 hover:text-rose-700 hover:underline font-bold px-2 py-1 cursor-pointer"
-              >
-                Azzera Filtri
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Quick Select Carousel for map markers */}
-      {filteredItems.length > 0 ? (
-        <div className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs flex items-center space-x-2 overflow-x-auto">
-          <span className="text-xs font-bold text-gray-500 shrink-0 ml-1">
-            Visibili sulla mappa ({filteredItems.length}):
-          </span>
-          {filteredItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleFocusItem(item)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-gray-200 hover:border-teal-500 bg-gray-50 hover:bg-teal-50 text-xs font-medium text-gray-800 shrink-0 transition-all cursor-pointer"
-              title="Clicca per centrare la mappa su questo annuncio"
-            >
-              <span>{item.type === 'offer' ? '🤝' : '🆘'}</span>
-              <span className="font-bold truncate max-w-[130px]">{item.title}</span>
-              <span className="text-[10px] text-gray-400">({item.userNickname})</span>
-            </button>
-          ))}
-        </div>
-      ) : hasActiveFilters ? (
-        <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex items-center justify-between text-xs text-amber-900">
-          <span>Nessun annuncio corrisponde ai filtri selezionati.</span>
-          <button
-            onClick={handleResetFilters}
-            className="font-bold text-amber-900 hover:underline ml-2 cursor-pointer"
-          >
-            Reimposta tutti i filtri
-          </button>
-        </div>
-      ) : null}
-
-      {/* Followed Entity Indicator */}
-      {followedUserId && (
-        <div className="bg-amber-100 border border-amber-300 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-          <div className="flex items-center space-x-3">
-            <div className="bg-amber-500 text-white p-2 rounded-full">
-              <User className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-bold text-amber-900">Stai seguendo un commerciante/utente</h3>
-              <p className="text-xs text-amber-800">
-                Sulla mappa sono mostrati solo i suoi annunci.
-              </p>
-            </div>
-          </div>
-          {setFollowedUserId && (
-            <button
-              onClick={() => setFollowedUserId(null)}
-              className="bg-white hover:bg-amber-50 text-amber-900 border border-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
-            >
-              Rimuovi filtro
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Map Container */}
-      <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden relative">
-        <div ref={mapContainerRef} className="w-full h-[620px] z-10" />
-
-        {/* Custom Map Navigation Controls (Top Right) */}
-        <div className="absolute top-4 right-4 z-20 flex flex-col space-y-2">
+          {/* Navigation Zoom & Location Stack */}
           <div className="bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 shadow-md flex flex-col overflow-hidden">
             <button
               type="button"
@@ -808,72 +578,310 @@ export const MapView: React.FC<MapViewProps> = ({
               title="Ingrandisci (Zoom In)"
               aria-label="Zoom In"
             >
-              <ZoomIn className="w-5 h-5 text-gray-800" />
+              <ZoomIn className="w-4 h-4 text-gray-800" />
             </button>
             <button
               type="button"
               onClick={handleZoomOut}
-              className="p-2.5 hover:bg-gray-100 text-gray-700 active:bg-gray-200 transition-all cursor-pointer"
+              className="p-2.5 hover:bg-gray-100 text-gray-700 active:bg-gray-200 border-b border-gray-200 transition-all cursor-pointer"
               title="Rimpicciolisci (Zoom Out)"
               aria-label="Zoom Out"
             >
-              <ZoomOut className="w-5 h-5 text-gray-800" />
+              <ZoomOut className="w-4 h-4 text-gray-800" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCenterUser}
+              className="p-2.5 hover:bg-teal-50 text-teal-700 border-b border-gray-200 transition-all cursor-pointer"
+              title="Centra sulla mia posizione"
+              aria-label="La mia posizione"
+            >
+              <Crosshair className="w-4 h-4 text-teal-700" />
+            </button>
+            <button
+              type="button"
+              onClick={handleFitAll}
+              className="p-2.5 hover:bg-emerald-50 text-emerald-700 transition-all cursor-pointer"
+              title="Mostra tutti i punti sulla mappa"
+              aria-label="Inquadra tutti"
+            >
+              <Maximize2 className="w-4 h-4 text-emerald-700" />
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={handleCenterUser}
-            className="p-2.5 bg-white/95 backdrop-blur-md hover:bg-teal-50 text-teal-700 rounded-xl border border-gray-200 shadow-md transition-all cursor-pointer"
-            title="Centra su di me"
-            aria-label="La mia posizione"
-          >
-            <Crosshair className="w-5 h-5 text-teal-700" />
-          </button>
-
-          <button
-            type="button"
-            onClick={handleFitAll}
-            className="p-2.5 bg-white/95 backdrop-blur-md hover:bg-emerald-50 text-emerald-700 rounded-xl border border-gray-200 shadow-md transition-all cursor-pointer"
-            title="Mostra tutti i punti"
-            aria-label="Mostra tutti i punti"
-          >
-            <Maximize2 className="w-5 h-5 text-emerald-700" />
-          </button>
         </div>
 
-        {/* Map Legend (Bottom Left) */}
-        <div className="absolute bottom-6 left-6 z-20 bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-lg space-y-2 text-xs max-w-xs">
-          <div className="font-bold text-gray-900 mb-1 flex items-center justify-between">
-            <span>Legenda Mappa</span>
-            <span className="text-[10px] text-gray-400 font-normal">Zoom: {currentZoom}</span>
+        {/* Followed User Indicator Badge (Top Left) */}
+        {followedUserId && (
+          <div className="absolute top-4 left-4 z-20 bg-amber-100/95 backdrop-blur-md border border-amber-300 rounded-2xl px-3.5 py-2 flex items-center space-x-2 shadow-lg text-xs">
+            <User className="w-4 h-4 text-amber-700" />
+            <span className="font-bold text-amber-900">Mappa seguendo un utente</span>
+            {setFollowedUserId && (
+              <button
+                onClick={() => setFollowedUserId(null)}
+                className="ml-2 font-bold text-amber-800 hover:underline cursor-pointer"
+              >
+                Rimuovi
+              </button>
+            )}
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-teal-600 inline-block"></span>
-            <span className="text-gray-700">Offerte ({positionedItems.filter((p) => p.item.type === 'offer').length})</span>
+        )}
+
+        {/* Map Legend & Integrated Filters Card (Bottom Right) */}
+        <div className="absolute bottom-4 right-4 z-20 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl border border-gray-200/90 shadow-xl space-y-2.5 text-xs w-72 sm:w-80 transition-all max-h-[85vh] overflow-y-auto">
+          {/* Header */}
+          <div className="font-bold text-gray-900 flex items-center justify-between border-b border-gray-100 pb-2">
+            <span className="text-sm font-black flex items-center gap-1.5 text-gray-900">
+              <span>🗺️</span> Legenda Mappa
+            </span>
+            <span className="text-[10px] text-gray-400 font-semibold bg-gray-100 px-2 py-0.5 rounded-full">
+              Zoom: {currentZoom}
+            </span>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-blue-600 inline-block"></span>
-            <span className="text-gray-700">Richieste ({positionedItems.filter((p) => p.item.type === 'request').length})</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs">📌</span>
-            <span className="text-amber-800 font-medium">Punti Fissi (Area 0-10 km)</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs">🏃</span>
-            <span className="text-teal-800 font-medium">Dinamici (100m fissi GPS)</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block"></span>
-            <span className="text-gray-700">La tua posizione GPS</span>
-          </div>
-          {antiOverlap && (
-            <div className="pt-1 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-medium">
-              <span>✨ Anti-sovrapposizione attiva</span>
+
+          {/* Integrated Dropdown Filters inside Legenda Card */}
+          <div className="space-y-2 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/90">
+            <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+              <span>🔍 Filtra Mappa:</span>
+              {hasActiveFilters && (
+                <button
+                  onClick={handleResetFilters}
+                  className="text-[10px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                >
+                  Azzera
+                </button>
+              )}
             </div>
-          )}
+
+            {/* Tipo Annuncio Dropdown */}
+            <div>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value as any)}
+                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+              >
+                <option value="all">Tutte le Gentilezze ({items.length})</option>
+                <option value="offer">🤝 Solo Offerte ({offersCount})</option>
+                <option value="request">🆘 Solo Richieste ({requestsCount})</option>
+                <option value="free">🎁 Solo Gratuiti ({freeCount})</option>
+              </select>
+            </div>
+
+            {/* Categoria Dropdown */}
+            <div>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+              >
+                <option value="all">📂 Tutte le Categorie ({items.length})</option>
+                {availableCategories.map((cat) => {
+                  const count = items.filter((i) => i.category === cat).length;
+                  return (
+                    <option key={cat} value={cat}>
+                      {cat} ({count})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* Modalità Tracking Dropdown */}
+            <div>
+              <select
+                value={filterTracking}
+                onChange={(e) => setFilterTracking(e.target.value as any)}
+                className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+              >
+                <option value="all">🌐 Tutti i Tipi (Dinamici + Fissi)</option>
+                <option value="dynamic">🏃 Solo Dinamici GPS ({dynamicCount})</option>
+                <option value="static">📌 Solo Punti Fissi ({staticCount})</option>
+              </select>
+            </div>
+
+            {/* Toggles */}
+            <div className="pt-1 space-y-1 text-[11px]">
+              <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                <span>🔗 Raggruppa 100m</span>
+                <input
+                  type="checkbox"
+                  checked={antiOverlap}
+                  onChange={(e) => setAntiOverlap(e.target.checked)}
+                  className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                />
+              </label>
+              <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                <span>⭕ Cerchi d'influenza</span>
+                <input
+                  type="checkbox"
+                  checked={showActionCircles}
+                  onChange={(e) => setShowActionCircles(e.target.checked)}
+                  className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                />
+              </label>
+            </div>
+          </div>
+
+          {/* Legend Items */}
+          <div className="space-y-1.5 pt-1 text-xs">
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="w-3 h-3 rounded-full bg-teal-600 inline-block shrink-0"></span>
+              <span className="text-gray-800">Offerte ({filteredItems.filter((i) => i.type === 'offer').length})</span>
+            </div>
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="w-3 h-3 rounded-full bg-blue-600 inline-block shrink-0"></span>
+              <span className="text-gray-800">Richieste ({filteredItems.filter((i) => i.type === 'request').length})</span>
+            </div>
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="text-xs shrink-0">📌</span>
+              <span className="text-amber-800">Punti Fissi (Area 0-10 km)</span>
+            </div>
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="text-xs shrink-0">🏃</span>
+              <span className="text-teal-800">Dinamici (100m fissi GPS)</span>
+            </div>
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="text-xs font-bold text-indigo-700 shrink-0">🔗</span>
+              <span className="text-indigo-900">Gruppi (Raggio &lt;100m)</span>
+            </div>
+            <div className="flex items-center space-x-2 font-medium">
+              <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block shrink-0"></span>
+              <span className="text-gray-800">La tua posizione GPS</span>
+            </div>
+            {antiOverlap && (
+              <div className="pt-1.5 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-extrabold">
+                <span>✨ Raggruppamento 100m attivo</span>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Cluster Expansion Modal Overlay */}
+        {activeClusterModal && (
+          <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 flex flex-col max-h-[85vh]">
+              {/* Modal Top Banner */}
+              <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 text-white flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black">
+                    🔗
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base">Gruppo di Gentilezze (Raggio 100m)</h3>
+                    <p className="text-xs text-indigo-100">
+                      Mostrate {filteredClusterItems.length} di {activeClusterModal.length} gentilezze nel gruppo
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveClusterModal(null)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Dropdown Filters Bar */}
+              <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-1.5">
+                  <span className="font-bold text-slate-700">Tipo:</span>
+                  <select
+                    value={modalFilterType}
+                    onChange={(e) => setModalFilterType(e.target.value as any)}
+                    className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                  >
+                    <option value="all">Tutti ({activeClusterModal.length})</option>
+                    <option value="offer">🤝 Disponibilità ({activeClusterModal.filter(i => i.type === 'offer').length})</option>
+                    <option value="request">🆘 Richieste ({activeClusterModal.filter(i => i.type === 'request').length})</option>
+                  </select>
+                </div>
+
+                {clusterCategories.length > 1 && (
+                  <div className="flex items-center space-x-1.5">
+                    <span className="font-bold text-slate-700">Categoria:</span>
+                    <select
+                      value={modalSelectedCategory}
+                      onChange={(e) => setModalSelectedCategory(e.target.value)}
+                      className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">Tutte le Categorie ({activeClusterModal.length})</option>
+                      {clusterCategories.map((cat) => {
+                        const count = activeClusterModal.filter((i) => i.category === cat).length;
+                        return (
+                          <option key={cat} value={cat}>
+                            {getCategorySymbol(cat)} {cat} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Items List */}
+              <div className="p-4 overflow-y-auto space-y-2.5 flex-1">
+                {filteredClusterItems.length > 0 ? (
+                  filteredClusterItems.map((item) => {
+                    const isOffer = item.type === 'offer';
+                    const symbol = getCategorySymbol(item.category);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          setActiveClusterModal(null);
+                          onSelectItem(item);
+                        }}
+                        className="p-3.5 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 transition-all cursor-pointer flex items-center justify-between group shadow-2xs"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg shadow-2xs shrink-0 ${
+                            isOffer ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {symbol}
+                          </div>
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
+                                isOffer ? 'bg-rose-100 text-rose-800' : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {isOffer ? 'Disponibilità' : 'Richiesta'}
+                              </span>
+                              <span className="text-xs text-slate-500 font-medium">{item.category}</span>
+                            </div>
+                            <h4 className="font-bold text-sm text-slate-900 group-hover:text-indigo-700 transition-colors mt-0.5">
+                              {item.title}
+                            </h4>
+                            <p className="text-xs text-slate-600 mt-0.5">Da: {item.userNickname} {item.distanceKm !== undefined ? `• ${Math.round(item.distanceKm * 1000)}m` : ''}</p>
+                          </div>
+                        </div>
+
+                        <div className="px-3 py-1.5 rounded-lg bg-indigo-600 group-hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs shrink-0 transition-colors">
+                          Apri →
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center text-slate-500">
+                    <p className="font-semibold text-sm">Nessuna gentilezza corrisponde ai filtri selezionati nel gruppo.</p>
+                    <button
+                      onClick={() => {
+                        setModalFilterType('all');
+                        setModalSelectedCategory('all');
+                      }}
+                      className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
+                    >
+                      Mostra tutte le gentilezze del gruppo
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-slate-50 border-t border-slate-200 text-center text-xs text-slate-500 font-medium">
+                Clicca su una gentilezza per aprirne i dettagli e contattare l'utente.
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

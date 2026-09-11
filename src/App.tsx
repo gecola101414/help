@@ -176,32 +176,39 @@ export default function App() {
   // Helper to attach distance to items, enforce proximity constraints, and discard legacy mock items
   const enrichItemsWithDistance = (itemList: HelpItem[], currentUser: UserProfile | null) => {
     const now = Date.now();
-    return itemList
-      .filter((item) => {
-        if (!item || item.id?.startsWith('init-')) return false;
-        const durationMs = (item.durationMinutes || 24 * 60) * 60 * 1000;
-        return (now - item.createdAt) <= durationMs;
-      })
-      .map((item) => {
-        const targetCoords = item.trackingType === 'static' && item.customCoords 
-          ? item.customCoords 
-          : item.location;
-          
-        const rawDist = currentUser?.location?.lat && targetCoords
-          ? calculateDistance(currentUser.location.lat, currentUser.location.lng, targetCoords.lat, targetCoords.lng)
-          : (item.distanceKm || 0.1);
-        const dist = Number(rawDist.toFixed(3));
-        
-        // Enforce proximity rules:
-        // Dynamic: exactly 100 meters (0.1 km) fixed
-        // Static: between 0.1 and 10 km (max 10 km)
-        const isStatic = item.trackingType === 'static';
-        const actionRadiusKm = isStatic
-          ? Math.min(10, Math.max(0.1, Number(item.actionRadiusKm) || 1))
-          : 0.1;
+    // Deduplicate by item.id to ensure unique keys in renders
+    const uniqueMap = new Map<string, HelpItem>();
+    itemList.forEach((item) => {
+      if (item && item.id && !item.id.startsWith('init-')) {
+        uniqueMap.set(item.id, item);
+      }
+    });
 
-        return { ...item, distanceKm: dist, actionRadiusKm };
-      });
+    const validItems = Array.from(uniqueMap.values()).filter((item) => {
+      const durationMs = (item.durationMinutes || 24 * 60) * 60 * 1000;
+      return (now - item.createdAt) <= durationMs;
+    });
+
+    return validItems.map((item) => {
+      const targetCoords = item.trackingType === 'static' && item.customCoords 
+        ? item.customCoords 
+        : item.location;
+        
+      const rawDist = currentUser?.location?.lat && targetCoords
+        ? calculateDistance(currentUser.location.lat, currentUser.location.lng, targetCoords.lat, targetCoords.lng)
+        : (item.distanceKm || 0.1);
+      const dist = Number(rawDist.toFixed(3));
+      
+      // Enforce proximity rules:
+      // Dynamic: exactly 100 meters (0.1 km) fixed
+      // Static: between 0.1 and 10 km (max 10 km)
+      const isStatic = item.trackingType === 'static';
+      const actionRadiusKm = isStatic
+        ? Math.min(10, Math.max(0.1, Number(item.actionRadiusKm) || 1))
+        : 0.1;
+
+      return { ...item, distanceKm: dist, actionRadiusKm };
+    });
   };
 
   // Keep reference to latest user for distance calculations in real-time callbacks
@@ -322,8 +329,18 @@ export default function App() {
             
             // Skip legacy test or expired items
             if (data.id?.startsWith('init-') || docSnap.id.startsWith('test_')) return;
+
+            // Handle Firestore timestamp objects or numbers safely
+            const createdAtNum = typeof data.createdAt === 'number'
+              ? data.createdAt
+              : (data.createdAt && typeof (data.createdAt as any).toMillis === 'function')
+              ? (data.createdAt as any).toMillis()
+              : (data.createdAt && typeof (data.createdAt as any).seconds === 'number')
+              ? (data.createdAt as any).seconds * 1000
+              : Date.now();
+
             const durationMs = (data.durationMinutes || 24 * 60) * 60 * 1000;
-            const isExpired = (Date.now() - data.createdAt) > durationMs;
+            const isExpired = (Date.now() - createdAtNum) > durationMs;
             if (isExpired) return;
 
             const targetCoords = data.trackingType === 'static' && data.customCoords 
@@ -333,13 +350,35 @@ export default function App() {
               ? calculateDistance(userRef.current.location.lat, userRef.current.location.lng, targetCoords.lat, targetCoords.lng)
               : 1.0;
             const dist = Number(rawDist.toFixed(3));
-            fetched.push({ ...data, id: docSnap.id, distanceKm: dist });
+            
+            // Ensure location is safely structured with numeric coordinates
+            const safeLocation = {
+              lat: typeof data.location?.lat === 'number' ? data.location.lat : (userRef.current?.location?.lat || 45.6836),
+              lng: typeof data.location?.lng === 'number' ? data.location.lng : (userRef.current?.location?.lng || 8.7071),
+              address: data.location?.address || 'Posizione indicata',
+            };
+
+            fetched.push({ ...data, createdAt: createdAtNum, location: safeLocation, id: docSnap.id, distanceKm: dist });
           });
 
-          // Authoritative Firestore database update
-          const enriched = enrichItemsWithDistance(fetched, userRef.current);
-          setItems(enriched);
-          localStorage.setItem('help_items_local', JSON.stringify(enriched));
+          // Authoritative Firestore database update WITH LOCAL PRESERVATION
+          setItems((prev) => {
+            const map = new Map<string, HelpItem>();
+            // 1. Add all items fetched from Firestore
+            fetched.forEach((item) => map.set(item.id, item));
+            
+            // 2. Preserve active local items from prev (e.g. just created by current user in this session)
+            prev.forEach((item) => {
+              if (item && item.id && !item.id.startsWith('init-') && !map.has(item.id)) {
+                map.set(item.id, item);
+              }
+            });
+
+            const merged = Array.from(map.values());
+            const enriched = enrichItemsWithDistance(merged, userRef.current);
+            localStorage.setItem('help_items_local', JSON.stringify(enriched));
+            return enriched;
+          });
         },
         (err) => {
           console.warn('[Firestore] snapshot listener warning:', err);

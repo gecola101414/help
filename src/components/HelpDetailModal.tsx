@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, MessageSquare, Trash2, ShieldCheck, Lock } from 'lucide-react';
+import { X, MapPin, Coins, User, Send, CheckCircle, Clock, HeartHandshake, MessageSquare, Trash2, ShieldCheck, Lock, Mic, MicOff, Radio, Volume2 } from 'lucide-react';
 import { HelpItem, UserProfile, ChatMessage } from '../types';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, doc, deleteDoc, getDocs } from 'firebase/firestore';
@@ -15,6 +15,21 @@ interface HelpDetailModalProps {
   setFollowedUserId?: (id: string | null) => void;
 }
 
+const getCategorySymbol = (catName: string) => {
+  const c = (catName || '').toLowerCase();
+  if (c.includes('spesa') || c.includes('commissioni')) return '🛒';
+  if (c.includes('domestici') || c.includes('lavoretti')) return '🔧';
+  if (c.includes('compagnia') || c.includes('assistenza')) return '☕';
+  if (c.includes('digital') || c.includes('informatico')) return '💻';
+  if (c.includes('riparazione') || c.includes('bici')) return '🚲';
+  if (c.includes('ripetizioni') || c.includes('studio')) return '📚';
+  if (c.includes('burocrazia') || c.includes('pratiche')) return '📄';
+  if (c.includes('trasporto') || c.includes('passaggio')) return '🚗';
+  if (c.includes('animali') || c.includes('pet')) return '🐾';
+  if (c.includes('utensili') || c.includes('attrezzi')) return '🔨';
+  return '💡';
+};
+
 export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   item,
   isOpen,
@@ -29,9 +44,15 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
   const [inputText, setInputText] = useState('');
   const [loadingMsg, setLoadingMsg] = useState(false);
 
+  // Piazza Audio Room state
+  const [isPiazzaOpen, setIsPiazzaOpen] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [piazzaMuted, setPiazzaMuted] = useState(true);
+
   useEffect(() => {
     // 0. RESET MESSAGES: ogni annuncio ha la sua chat dedicata ed esclusiva
     setMessages([]);
+    setIsPiazzaOpen(false);
 
     if (!isOpen || !item) return;
 
@@ -85,6 +106,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
   if (!isOpen || !item) return null;
 
+  const isOffer = item.type === 'offer';
   const isOwner = user?.id === item.userId;
   const isHelper = user?.id === item.helperId;
   const isStatic = item.trackingType === 'static';
@@ -112,7 +134,6 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     setInputText('');
     setLoadingMsg(true);
 
-    // 1. Post to server API
     try {
       await fetch(`/api/help-items/${item.id}/messages`, {
         method: 'POST',
@@ -121,7 +142,6 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
       });
     } catch (err) {}
 
-    // 2. Post to dedicated Firestore subcollection
     try {
       const sanitizedPayload = JSON.parse(JSON.stringify(msgPayload));
       await addDoc(collection(db, 'help_items', item.id, 'messages'), sanitizedPayload);
@@ -154,16 +174,18 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-100 flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-200">
         
-        {/* Header */}
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white flex items-center justify-between shrink-0">
+        {/* Header - Subtle color coding: Red/Rose for offer, Blue for request */}
+        <div className={`p-6 text-white flex items-center justify-between shrink-0 ${
+          isOffer ? 'bg-gradient-to-r from-rose-600 to-red-600' : 'bg-gradient-to-r from-blue-600 to-indigo-600'
+        }`}>
           <div>
             <div className="flex items-center space-x-2">
-              <span className={`text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-full ${
-                item.type === 'offer' ? 'bg-emerald-200 text-emerald-900' : 'bg-amber-200 text-amber-900'
+              <span className={`text-[10px] uppercase font-extrabold px-2.5 py-0.5 rounded-full ${
+                isOffer ? 'bg-rose-100 text-rose-900' : 'bg-blue-100 text-blue-900'
               }`}>
-                {item.type === 'offer' ? 'Offerta di Aiuto' : 'Richiesta di Aiuto'}
+                {getCategorySymbol(item.category)} {isOffer ? 'Disponibilità' : 'Richiesta'}
               </span>
-              <span className="text-xs text-emerald-100">{item.category}</span>
+              <span className="text-xs opacity-90">{item.category}</span>
             </div>
             <h2 className="text-lg font-bold mt-1">{item.title}</h2>
           </div>
@@ -181,7 +203,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             
             <div className="flex flex-wrap items-center justify-between pt-2 border-t border-slate-200/60 text-xs text-slate-500 gap-2">
               <div className="flex items-center space-x-1.5">
-                <User className="w-3.5 h-3.5 text-emerald-600" />
+                <User className={`w-3.5 h-3.5 ${isOffer ? 'text-rose-600' : 'text-blue-600'}`} />
                 <span>Pubblicato da: <strong className="text-slate-800">{item.userNickname}</strong></span>
               </div>
               
@@ -199,7 +221,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
               )}
 
               <div className="flex items-center space-x-1.5 mt-2 w-full sm:w-auto sm:mt-0">
-                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                <MapPin className="w-3.5 h-3.5 text-slate-500" />
                 <span>{item.location.address} {item.distanceKm !== undefined ? `(${item.distanceKm} km)` : ''}</span>
               </div>
               <div className="flex items-center space-x-1 text-amber-600 font-bold">
@@ -209,71 +231,16 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Announcement Spatial Presence Banner */}
-          {item.trackingType === 'static' ? (
-            <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex items-start space-x-3 text-xs">
-              <div className="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center font-bold text-sm shrink-0 mt-0.5 shadow-xs">
-                📌
-              </div>
-              <div className="space-y-1 w-full">
-                <div className="font-bold flex items-center justify-between text-amber-950">
-                  <span>📍 Annuncio Statico (Ancorato al luogo / attività)</span>
-                  <span className="bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
-                    Raggio: {effectiveRadius} km
-                  </span>
-                </div>
-                <p className="text-[11px] leading-relaxed text-amber-900">
-                  Questo annuncio resta fisso all'indirizzo impostato (<strong>{item.staticLocation?.formattedAddress || item.location.address}</strong>). Gli utenti possono interagire e chattare entro un raggio di <strong>{effectiveRadius} km</strong>.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className={`p-4 rounded-xl border flex items-start space-x-3 text-xs ${
-              item.distanceKm !== undefined && item.distanceKm <= 0.1
-                ? 'bg-teal-50 border-teal-300 text-teal-950'
-                : 'bg-teal-50/60 border-teal-200 text-teal-900'
-            }`}>
-              <div className="w-8 h-8 rounded-lg bg-teal-700 text-white flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 shadow-xs animate-pulse">
-                100m
-              </div>
-              <div className="space-y-1 w-full">
-                <div className="font-bold flex items-center justify-between text-teal-950">
-                  <span>🏃 Annuncio Dinamico (Segue {item.userNickname} via GPS)</span>
-                  <span className="bg-teal-700 text-white px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase">
-                    100 metri FISSI
-                  </span>
-                </div>
-                <p className="text-[11px] leading-relaxed text-teal-900">
-                  {(() => {
-                    const isInside100m = item.distanceKm !== undefined && item.distanceKm <= 0.1;
-                    const distStr = item.distanceKm !== undefined
-                      ? item.distanceKm < 1 ? `${Math.round(item.distanceKm * 1000)} metri` : `${item.distanceKm.toFixed(1)} km`
-                      : '? km';
-                    return isInside100m ? (
-                      <>
-                        🎯 <strong>Sei a meno di 100 metri dalla persona ({distStr})!</strong> Sei nelle immediate vicinanze di {item.userNickname}. Questo annuncio rispetta la regola di vicinanza per incentivare un'interazione umana immediata e spontanea.
-                      </>
-                    ) : (
-                      <>
-                        ⚡ <strong>Distanza fissa a 100 metri:</strong> Viaggia con la persona via GPS. Attualmente ti trovi a <strong>{distStr}</strong>; l'annuncio diventerà interagibile quando sarete a meno di 100 metri l'uno dall'altro.
-                      </>
-                    );
-                  })()}
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* Status & Actions Box */}
-          <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div>
               <div className="text-xs font-bold text-slate-700">Stato Annuncio</div>
-              <div className="text-sm font-extrabold text-emerald-800 capitalize flex items-center space-x-1.5 mt-0.5">
+              <div className="text-sm font-extrabold text-slate-900 capitalize flex items-center space-x-1.5 mt-0.5">
                 {item.status === 'active' && <Clock className="w-4 h-4 text-amber-500" />}
                 {item.status === 'in_progress' && <HeartHandshake className="w-4 h-4 text-emerald-600 animate-pulse" />}
                 {item.status === 'completed' && <CheckCircle className="w-4 h-4 text-emerald-600" />}
                 <span>
-                  {item.status === 'active' && 'Attivo / In attesa di aiuto'}
+                  {item.status === 'active' && 'Attivo / In attesa'}
                   {item.status === 'in_progress' && `In corso con ${item.helperNickname || 'un vicino'}`}
                   {item.status === 'completed' && 'Completato con successo 🎉'}
                 </span>
@@ -286,7 +253,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 isWithinRadius ? (
                   <button
                     onClick={handleTakeAction}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center space-x-1.5 cursor-pointer"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
                   >
                     <HeartHandshake className="w-4 h-4" />
                     <span>{item.type === 'request' ? 'Voglio Aiutare io!' : 'Accetta questo Aiuto'}</span>
@@ -302,7 +269,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
               {item.status === 'in_progress' && (isOwner || isHelper) && (
                 <button
                   onClick={handleComplete}
-                  className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-teal-700/20 transition-all flex items-center space-x-1.5 cursor-pointer"
+                  className="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span>Segna come Concluso</span>
@@ -313,30 +280,32 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 <button
                   onClick={handleDeleteOrClose}
                   className="px-3 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-                  title="Chiude l'annuncio ed elimina definitivamente tutti i messaggi della chat"
+                  title="Chiude l'annuncio ed elimina definitivamente tutti i messaggi"
                 >
                   <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                  <span>Chiudi Annuncio e Cancella Chat</span>
+                  <span>Chiudi Annuncio</span>
                 </button>
               )}
             </div>
           </div>
 
-          {/* Chat / Coordination Section */}
-          <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col h-64 bg-slate-50">
+          {/* Chat & Piazza Section */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden flex flex-col h-72 bg-slate-50">
             <div className="bg-slate-100 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-bold text-slate-700">
               <div className="flex items-center space-x-2">
                 <MessageSquare className="w-4 h-4 text-emerald-600" />
-                <span>Chat Dedicata a Questo Annuncio</span>
-                <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
-                  Effimera
-                </span>
+                <span>Chat Dedicata</span>
               </div>
-              {!isWithinRadius && !isOwner && !isClosed && (
-                <span className="text-[10px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md font-extrabold uppercase tracking-wide">
-                  🔒 Sbloccabile nel raggio ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + 'm' : effectiveRadius + 'km'})
-                </span>
-              )}
+              
+              {/* PIAZZA LIVE AUDIO BUTTON (Richiesto dall'utente) */}
+              <button
+                onClick={() => setIsPiazzaOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs shadow-xs transition-all flex items-center space-x-1.5 cursor-pointer animate-pulse"
+                title="Entra nella Piazza: stanza audio live dove tutti parlano e tutti ascoltano"
+              >
+                <Radio className="w-3.5 h-3.5 text-indigo-200" />
+                <span>🏛️ Entra in Piazza (Audio Live)</span>
+              </button>
             </div>
 
             <div className="flex-1 p-4 overflow-y-auto space-y-3">
@@ -344,7 +313,6 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 text-center flex flex-col items-center justify-center py-6">
                   <Lock className="w-6 h-6 text-slate-400 mb-1" />
                   <div className="font-bold text-slate-800">Questo annuncio è stato chiuso</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">La chat dedicata è stata conclusa ed archiviata.</div>
                 </div>
               ) : !isWithinRadius && !isOwner ? (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-950 flex items-start space-x-2.5">
@@ -352,7 +320,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                   <div className="space-y-0.5">
                     <div className="font-bold">Regola di vicinanza per i messaggi:</div>
                     <div className="text-[11px] opacity-90 leading-relaxed">
-                      Puoi consultare l'annuncio da qualsiasi distanza, ma per inviare messaggi devi trovarti nel raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat e accordarti con {item.userNickname}!
+                      Per inviare messaggi devi trovarti nel raggio d'azione ({effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'}). Avvicinati per sbloccare la chat!
                     </div>
                   </div>
                 </div>
@@ -360,8 +328,7 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
 
               {!isClosed && messages.length === 0 ? (
                 <div className="text-center text-xs text-slate-400 py-6">
-                  Nessun messaggio per questo annuncio. Scrivi qui sotto per accordarti sui dettagli!
-                  <div className="text-[10px] text-slate-400/80 mt-1">Tutti i messaggi spariranno automaticamente quando l'annuncio verrà chiuso.</div>
+                  Nessun messaggio. Scrivi qui sotto o entra in Piazza per parlare a voce!
                 </div>
               ) : (
                 messages.map((msg) => {
@@ -386,27 +353,106 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 disabled={isClosed || (!isWithinRadius && !isOwner)}
-                placeholder={
-                  isClosed
-                    ? "🔒 Annuncio chiuso, chat disattivata"
-                    : isWithinRadius || isOwner
-                    ? "Scrivi un messaggio dedicato per questo annuncio..."
-                    : `🔒 Avvicinati entro ${effectiveRadius < 1 ? Math.round(effectiveRadius * 1000) + ' metri' : effectiveRadius + ' km'} per scrivere`
-                }
-                className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
+                placeholder={isClosed ? 'Annuncio chiuso' : (!isWithinRadius && !isOwner) ? 'Fuori raggio chat' : 'Scrivi un messaggio...'}
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-50"
               />
               <button
                 type="submit"
-                disabled={isClosed || loadingMsg || !inputText.trim() || (!isWithinRadius && !isOwner)}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                disabled={isClosed || (!isWithinRadius && !isOwner) || !inputText.trim()}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>Invia</span>
               </button>
             </form>
           </div>
-
         </div>
+
+        {/* PIAZZA LIVE AUDIO ROOM OVERLAY / MODAL */}
+        {isPiazzaOpen && (
+          <div className="absolute inset-0 z-50 bg-slate-900/90 backdrop-blur-md p-6 flex flex-col justify-between text-white animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-lg animate-pulse">
+                  <Radio className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-black text-base">🏛️ La Piazza (Audio Live)</h3>
+                  <p className="text-xs text-indigo-300">Stanza vocale condivisa per "{item.title}"</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPiazzaOpen(false)}
+                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 py-6 flex flex-col items-center justify-center space-y-6">
+              <div className="relative flex items-center justify-center">
+                <div className={`absolute w-32 h-32 rounded-full bg-indigo-500/20 animate-ping ${isSpeaking && !piazzaMuted ? 'opacity-100' : 'opacity-0'}`}></div>
+                <div className="w-24 h-24 rounded-full bg-gradient-to-tr from-indigo-600 to-teal-500 flex items-center justify-center shadow-2xl border-4 border-slate-800 text-3xl">
+                  🎙️
+                </div>
+              </div>
+
+              <div className="text-center space-y-1">
+                <div className="font-bold text-sm">
+                  {piazzaMuted ? 'Microfono disattivato (Sei in ascolto)' : 'Microfono attivo (Tutti ti sentono)'}
+                </div>
+                <p className="text-xs text-slate-400">
+                  Stile Piazza: chiunque può attivare il microfono e parlare liberamente con i presenti.
+                </p>
+              </div>
+
+              {/* Participants list */}
+              <div className="w-full max-w-sm bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 space-y-2">
+                <div className="text-[11px] font-bold text-indigo-300 uppercase tracking-wider">Partecipanti in Piazza (2)</div>
+                <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl text-xs">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className="font-bold">{item.userNickname} (Autore)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded">In ascolto</span>
+                </div>
+                {user && (
+                  <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl text-xs">
+                    <div className="flex items-center space-x-2">
+                      <span className={`w-2 h-2 rounded-full ${piazzaMuted ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+                      <span className="font-bold">{user.nickname} (Tu)</span>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${piazzaMuted ? 'text-amber-300 bg-amber-950/60' : 'text-emerald-300 bg-emerald-950/60'}`}>
+                      {piazzaMuted ? 'Silenziato' : 'Parlando 🎙️'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-slate-800 pt-4 flex items-center justify-center gap-4">
+              <button
+                onClick={() => setPiazzaMuted(!piazzaMuted)}
+                className={`flex items-center space-x-2 px-5 py-3 rounded-2xl font-bold text-xs transition-all shadow-lg cursor-pointer ${
+                  piazzaMuted
+                    ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+              >
+                {piazzaMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 animate-bounce" />}
+                <span>{piazzaMuted ? 'Attiva Microfono (Parla)' : 'Muta Microfono'}</span>
+              </button>
+
+              <button
+                onClick={() => setIsPiazzaOpen(false)}
+                className="bg-red-600 hover:bg-red-700 text-white px-5 py-3 rounded-2xl font-bold text-xs transition-all shadow-lg cursor-pointer flex items-center space-x-2"
+              >
+                <X className="w-4 h-4" />
+                <span>Esci dalla Piazza</span>
+              </button>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
