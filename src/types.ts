@@ -59,6 +59,8 @@ export interface ChatMessage {
   senderId: string;
   senderNickname: string;
   text: string;
+  audioUrl?: string;
+  audioDuration?: number;
   createdAt: number;
 }
 
