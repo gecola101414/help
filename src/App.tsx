@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { UserProfile, HelpItem } from './types';
+import { UserProfile, HelpItem, Community, AreaSponsor, SponsorInitiative, isCommunityExpired } from './types';
 import { db, ensureAuth } from './lib/firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import { Navbar } from './components/Navbar';
@@ -94,6 +94,102 @@ export default function App() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<HelpItem | null>(null);
   const [followedUserId, setFollowedUserId] = useState<string | null>(null);
+
+  // Default initial data for Communities, Sponsors and Initiatives with map locations
+  const defaultCommunities: Community[] = [
+    {
+      id: 'comm-somma-1',
+      name: 'Comunità Civica Somma Centro & Castello',
+      sedeAddress: 'Corso Repubblica 12 (presso Centro Civico)',
+      comune: 'Somma Lombardo',
+      description: 'Cittadini attivi per il mutuo soccorso, supporto anziani, e condivisione attrezzi a Somma Lombardo.',
+      founderId: 'user-demo-1',
+      founderNickname: 'MarcoSolidale',
+      members: ['user-demo-1', 'user-demo-2', 'user-demo-3'],
+      memberNicknames: ['MarcoSolidale', 'ElenaVicina', 'Giuseppe_Mi'],
+      memberCount: 3,
+      brikoTreasury: 1250,
+      createdAt: Date.now() - 86400000 * 5,
+      location: { lat: 45.6836, lng: 8.7071, address: 'Corso Repubblica 12, Somma Lombardo (VA)' }
+    },
+    {
+      id: 'comm-milano-1',
+      name: 'Rete Solidale Porta Romana & Navigli',
+      sedeAddress: 'Via Muratori 24 (Sede di Quartiere)',
+      comune: 'Milano',
+      description: 'Comunità aperta per aiutarsi nelle commissioni quotidiane, spesa e supporto studenti universitari.',
+      founderId: 'user-demo-2',
+      founderNickname: 'ElenaVicina',
+      members: ['user-demo-2', 'user-demo-4'],
+      memberNicknames: ['ElenaVicina', 'Luca_Civico'],
+      memberCount: 2,
+      brikoTreasury: 890,
+      createdAt: Date.now() - 86400000 * 3,
+      location: { lat: 45.4530, lng: 9.2025, address: 'Via Muratori 24, Milano (MI)' }
+    }
+  ];
+
+  const defaultSponsors: AreaSponsor[] = [
+    {
+      id: 'spon-1',
+      name: 'Bar & Ristorante "Al Castello"',
+      category: 'Commerciante Locale',
+      comune: 'Somma Lombardo',
+      address: 'Piazza Vittorio Emanuele II, Somma Lombardo',
+      brikoOffered: 500,
+      message: 'Offriamo 500 BRIKO alla nostra comunità per sostenere la consegna della spesa agli anziani!',
+      createdAt: Date.now() - 86400000 * 2,
+      location: { lat: 45.6840, lng: 8.7080, address: 'Piazza Vittorio Emanuele II, Somma Lombardo (VA)' }
+    },
+    {
+      id: 'spon-2',
+      name: 'Biscottificio Lombardo Artigianale',
+      category: 'Supermercato & Alimentari',
+      comune: 'Gallarate',
+      address: 'Corso Italia 15, Gallarate',
+      brikoOffered: 900,
+      message: 'Premiano la gentilezza vicinale con 900 BRIKO in palio per chi fa azioni solidali sul territorio.',
+      createdAt: Date.now() - 86400000 * 4,
+      location: { lat: 45.6660, lng: 8.7920, address: 'Corso Italia 15, Gallarate (VA)' }
+    }
+  ];
+
+  const defaultInitiatives: SponsorInitiative[] = [
+    {
+      id: 'init-1',
+      sponsorId: 'spon-1',
+      sponsorName: 'Bar & Ristorante "Al Castello"',
+      category: 'Ambiente & Verde Civico',
+      title: 'Pulizia e Cura del Parco di Somma Lombardo',
+      description: 'Lo Sponsor Bar Al Castello regala 100 BRIKO a chiunque partecipi alla giornata di pulizia delle aree verdi.',
+      comune: 'Somma Lombardo',
+      brikoRewardPerParticipant: 100,
+      totalBrikoBudget: 500,
+      brikoRemaining: 400,
+      participantsCount: 1,
+      createdAt: Date.now() - 86400000 * 1,
+      location: { lat: 45.6850, lng: 8.7090, address: 'Parco di Somma Lombardo (VA)' }
+    },
+    {
+      id: 'init-2',
+      sponsorId: 'spon-2',
+      sponsorName: 'Biscottificio Lombardo Artigianale',
+      category: 'Supporto Anziani',
+      title: 'Spesa e consegna farmaci per i nonni soli del quartiere',
+      description: 'Il Biscottificio premia con 150 BRIKO chiunque offra un passaggio o aiuti un anziano nella spesa settimanale.',
+      comune: 'Gallarate',
+      brikoRewardPerParticipant: 150,
+      totalBrikoBudget: 900,
+      brikoRemaining: 750,
+      participantsCount: 1,
+      createdAt: Date.now() - 86400000 * 2,
+      location: { lat: 45.6670, lng: 8.7930, address: 'Corso Italia 15, Gallarate (VA)' }
+    }
+  ];
+
+  const [communities, setCommunities] = useState<Community[]>(defaultCommunities);
+  const [sponsors, setSponsors] = useState<AreaSponsor[]>(defaultSponsors);
+  const [initiatives, setInitiatives] = useState<SponsorInitiative[]>(defaultInitiatives);
 
   // Real GPS Geolocation on startup and manual sync (Announcements follow the creator!)
   const syncCreatorLocationToAnnouncements = async (userId: string, newLocation: { lat: number; lng: number; address: string }) => {
@@ -398,6 +494,64 @@ export default function App() {
     };
   }, [user?.location?.lat, user?.location?.lng]);
 
+  // Firestore real-time listeners for Communities, Sponsors & Initiatives
+  useEffect(() => {
+    let unSubComm: (() => void) | undefined;
+    let unSubSpon: (() => void) | undefined;
+    let unSubInit: (() => void) | undefined;
+
+    try {
+      unSubComm = onSnapshot(collection(db, 'help_communities'), (snap) => {
+        const fetched: Community[] = [];
+        snap.forEach((d) => {
+          const comm = { id: d.id, ...d.data() } as Community;
+          if (!isCommunityExpired(comm)) {
+            fetched.push(comm);
+          }
+        });
+        if (fetched.length > 0) {
+          setCommunities(fetched);
+        } else {
+          setCommunities(defaultCommunities.filter((c) => !isCommunityExpired(c)));
+        }
+      });
+    } catch (e) {}
+
+    try {
+      unSubSpon = onSnapshot(collection(db, 'help_sponsors'), (snap) => {
+        const fetched: AreaSponsor[] = [];
+        snap.forEach((d) => {
+          fetched.push({ id: d.id, ...d.data() } as AreaSponsor);
+        });
+        if (fetched.length > 0) {
+          setSponsors(fetched);
+        } else {
+          setSponsors(defaultSponsors);
+        }
+      });
+    } catch (e) {}
+
+    try {
+      unSubInit = onSnapshot(collection(db, 'help_sponsor_initiatives'), (snap) => {
+        const fetched: SponsorInitiative[] = [];
+        snap.forEach((d) => {
+          fetched.push({ id: d.id, ...d.data() } as SponsorInitiative);
+        });
+        if (fetched.length > 0) {
+          setInitiatives(fetched);
+        } else {
+          setInitiatives(defaultInitiatives);
+        }
+      });
+    } catch (e) {}
+
+    return () => {
+      if (unSubComm) unSubComm();
+      if (unSubSpon) unSubSpon();
+      if (unSubInit) unSubInit();
+    };
+  }, []);
+
   // Save user profile to localStorage & sync
   const handleSaveProfile = async (updated: Partial<UserProfile>) => {
     if (!user) return;
@@ -625,11 +779,16 @@ export default function App() {
           <MapView
             items={items}
             user={user}
+            communities={communities}
+            sponsors={sponsors}
+            initiatives={initiatives}
             onSelectItem={(item) => setSelectedItem(item)}
             onOpenCreate={() => setIsCreateOpen(true)}
             onUpdateLocation={handleUpdateLocation}
             followedUserId={followedUserId}
             setFollowedUserId={setFollowedUserId}
+            onOpenCommunity={() => setActiveTab('community')}
+            onOpenSponsor={() => setActiveTab('sponsors')}
           />
         )}
 
@@ -644,11 +803,24 @@ export default function App() {
         )}
 
         {activeTab === 'community' && (
-          <CommunityWall user={user} onSaveProfile={handleSaveProfile} initialSubTab="communities" />
+          <CommunityWall 
+            user={user} 
+            communities={communities}
+            setCommunities={setCommunities}
+            onSaveProfile={handleSaveProfile} 
+            initialSubTab="communities" 
+          />
         )}
 
         {activeTab === 'sponsors' && (
-          <SponsorPage user={user} onSaveProfile={handleSaveProfile} />
+          <SponsorPage 
+            user={user} 
+            sponsors={sponsors}
+            setSponsors={setSponsors}
+            initiatives={initiatives}
+            setInitiatives={setInitiatives}
+            onSaveProfile={handleSaveProfile} 
+          />
         )}
       </main>
 

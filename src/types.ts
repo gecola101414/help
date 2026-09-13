@@ -13,7 +13,8 @@ export interface UserProfile {
   rating: number;
   helpedCount: number;
   karma: number; // Solidarietà Karma score
-  communityId?: string; // ID della comunità di appartenenza
+  communityId?: string; // ID della comunità di appartenenza primaria
+  communityIds?: string[]; // IDs di tutte le comunità a cui l'utente è iscritto (max 5)
   createdAt: number;
 }
 
@@ -27,6 +28,11 @@ export interface AreaSponsor {
   brikoOffered: number; // BRIKO acqisiti e offerti alla comunità
   message: string;
   createdAt: number;
+  location?: {
+    lat: number;
+    lng: number;
+    address: string;
+  };
 }
 
 export interface SponsorInitiative {
@@ -42,6 +48,11 @@ export interface SponsorInitiative {
   brikoRemaining: number;
   participantsCount: number;
   createdAt: number;
+  location?: {
+    lat: number;
+    lng: number;
+    address: string;
+  };
 }
 
 export interface Community {
@@ -57,6 +68,25 @@ export interface Community {
   memberCount: number; // Max 100
   brikoTreasury: number; // Fondo BRIKO di comunità
   createdAt: number;
+  actionRadiusKm?: number; // Raggio d'influenza territoriale (Max 10 km)
+  location?: {
+    lat: number;
+    lng: number;
+    address: string;
+  };
+}
+
+// Helper to check if a community has expired (30 days without reaching 10 members)
+export function isCommunityExpired(community: Community): boolean {
+  if (!community || !community.createdAt) return false;
+  const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000; // 30 Giorni (1 mese)
+  const age = Date.now() - community.createdAt;
+  const count = typeof community.memberCount === 'number' 
+    ? community.memberCount 
+    : (community.members ? community.members.length : 0);
+  
+  // Se ha superato i 30 giorni (1 mese) E ha meno di 10 membri -> Scade e scompare
+  return age >= ONE_MONTH_MS && count < 10;
 }
 
 export interface CommunityMessage {

@@ -4,18 +4,36 @@ import {
 } from 'lucide-react';
 import { UserProfile, AreaSponsor, SponsorInitiative } from '../types';
 import { ComuneAutocompleteInput } from './ComuneAutocompleteInput';
+import { resolveAddressGeocode } from '../services/comuniService';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, setDoc, doc, updateDoc } from 'firebase/firestore';
 
 interface SponsorPageProps {
   user: UserProfile | null;
+  sponsors?: AreaSponsor[];
+  setSponsors?: React.Dispatch<React.SetStateAction<AreaSponsor[]>>;
+  initiatives?: SponsorInitiative[];
+  setInitiatives?: React.Dispatch<React.SetStateAction<SponsorInitiative[]>>;
   onSaveProfile?: (updated: Partial<UserProfile>) => void;
 }
 
-export const SponsorPage: React.FC<SponsorPageProps> = ({ user, onSaveProfile }) => {
+export const SponsorPage: React.FC<SponsorPageProps> = ({ 
+  user, 
+  sponsors: externalSponsors,
+  setSponsors: setExternalSponsors,
+  initiatives: externalInitiatives,
+  setInitiatives: setExternalInitiatives,
+  onSaveProfile 
+}) => {
   // State for Sponsors & Sponsored Initiatives
-  const [sponsors, setSponsors] = useState<AreaSponsor[]>([]);
-  const [initiatives, setInitiatives] = useState<SponsorInitiative[]>([]);
+  const [localSponsors, setLocalSponsors] = useState<AreaSponsor[]>([]);
+  const [localInitiatives, setLocalInitiatives] = useState<SponsorInitiative[]>([]);
+
+  const sponsors = externalSponsors || localSponsors;
+  const setSponsors = setExternalSponsors || setLocalSponsors;
+  const initiatives = externalInitiatives || localInitiatives;
+  const setInitiatives = setExternalInitiatives || setLocalInitiatives;
+
   const [isCreateSponsorOpen, setIsCreateSponsorOpen] = useState(false);
   const [isCreateInitiativeOpen, setIsCreateInitiativeOpen] = useState(false);
   
@@ -147,6 +165,8 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ user, onSaveProfile })
 
     setIsCreatingSponsor(true);
     const sponsorId = 'sponsor-' + Date.now();
+    const geo = await resolveAddressGeocode(sponsorComune.trim(), sponsorName.trim());
+
     const newSponsorData: AreaSponsor = {
       id: sponsorId,
       name: sponsorName.trim(),
@@ -155,6 +175,11 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ user, onSaveProfile })
       brikoOffered: Number(sponsorBriko) || 500,
       message: sponsorMessage.trim(),
       createdAt: Date.now(),
+      location: {
+        lat: geo.lat || 45.6836,
+        lng: geo.lng || 8.7071,
+        address: `${sponsorName.trim()}, ${sponsorComune.trim()}`
+      }
     };
 
     try {
@@ -178,6 +203,8 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ user, onSaveProfile })
 
     setIsCreatingInitiative(true);
     const initId = 'init-' + Date.now();
+    const geo = await resolveAddressGeocode(initComune.trim(), initTitle.trim());
+
     const newInitiative: SponsorInitiative = {
       id: initId,
       sponsorId: 'spon-user-' + user.id,
@@ -191,6 +218,11 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ user, onSaveProfile })
       brikoRemaining: Number(initBudget) || 500,
       participantsCount: 0,
       createdAt: Date.now(),
+      location: {
+        lat: geo.lat || 45.6836,
+        lng: geo.lng || 8.7071,
+        address: `${initTitle.trim()}, ${initComune.trim()}`
+      }
     };
 
     try {

@@ -2,20 +2,29 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Building2, Users, MessageSquare, Plus, Search, Sparkles, Trophy, 
   HeartHandshake, Mic, Send, Volume2, ShieldCheck, Check, MapPin, 
-  Store, UserPlus, LogOut, X, Loader2, Award, Play, Pause
+  Store, UserPlus, LogOut, X, Loader2, Award, Play, Pause, AlertCircle, Clock
 } from 'lucide-react';
-import { UserProfile, Community, CommunityMessage, AreaSponsor, SponsorInitiative } from '../types';
+import { UserProfile, Community, CommunityMessage, AreaSponsor, SponsorInitiative, isCommunityExpired } from '../types';
 import { ComuneAutocompleteInput } from './ComuneAutocompleteInput';
+import { resolveAddressGeocode } from '../services/comuniService';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, doc, updateDoc, setDoc, query, orderBy } from 'firebase/firestore';
 
 interface CommunityWallProps {
   user: UserProfile | null;
+  communities?: Community[];
+  setCommunities?: React.Dispatch<React.SetStateAction<Community[]>>;
   onSaveProfile?: (updated: Partial<UserProfile>) => void;
   initialSubTab?: 'communities' | 'stories';
 }
 
-export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfile, initialSubTab = 'communities' }) => {
+export const CommunityWall: React.FC<CommunityWallProps> = ({ 
+  user, 
+  communities: externalCommunities, 
+  setCommunities: setExternalCommunities, 
+  onSaveProfile, 
+  initialSubTab = 'communities' 
+}) => {
   const [activeSubTab, setActiveSubTab] = useState<'communities' | 'stories'>(
     initialSubTab === 'stories' ? 'stories' : 'communities'
   );
@@ -27,7 +36,10 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
   }, [initialSubTab]);
   
   // State for Communities
-  const [communities, setCommunities] = useState<Community[]>([]);
+  const [localCommunities, setLocalCommunities] = useState<Community[]>([]);
+  const communities = externalCommunities || localCommunities;
+  const setCommunities = setExternalCommunities || setLocalCommunities;
+
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
   const [searchCommunityQuery, setSearchCommunityQuery] = useState('');
   const [isCreateCommunityOpen, setIsCreateCommunityOpen] = useState(false);
@@ -37,6 +49,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
   const [newCommSede, setNewCommSede] = useState('');
   const [newCommComune, setNewCommComune] = useState(() => (user?.location?.address && user.location.address !== 'Posizione non condivisa' ? user.location.address.split(',')[0] : ''));
   const [newCommDesc, setNewCommDesc] = useState('');
+  const [newCommRadiusKm, setNewCommRadiusKm] = useState<number>(5);
   const [isCreatingComm, setIsCreatingComm] = useState(false);
 
   // Community Chat Messages
@@ -185,8 +198,21 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
     e.preventDefault();
     if (!newCommName.trim() || !newCommSede.trim() || !user) return;
 
+    // Check user max 5 communities limit
+    const userCommunitiesCount = communities.filter(
+      (c) => !isCommunityExpired(c) && c.members?.includes(user.id)
+    ).length;
+    if (userCommunitiesCount >= 5) {
+      alert('⚠️ Limite raggiunto: sei già iscritto a 5 comunità civiche (massimo consentito per persona). Per crearne una nuova devi prima lasciarne una a cui sei iscritto.');
+      return;
+    }
+
     setIsCreatingComm(true);
     const commId = 'comm-' + Date.now();
+    
+    // Geocode Sede Address
+    const geo = await resolveAddressGeocode(newCommComune.trim(), newCommSede.trim());
+
     const newCommunityData: Community = {
       id: commId,
       name: newCommName.trim(),
@@ -200,6 +226,12 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
       memberCount: 1,
       brikoTreasury: 500, // Fondo iniziale omaggio
       createdAt: Date.now(),
+      actionRadiusKm: Math.min(10, Math.max(1, Number(newCommRadiusKm) || 5)),
+      location: {
+        lat: geo.lat || 45.6836,
+        lng: geo.lng || 8.7071,
+        address: `${newCommSede.trim()}, ${newCommComune.trim()}`
+      }
     };
 
     try {
@@ -227,12 +259,21 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
       alert('Questa comunità ha raggiunto il limite massimo di 100 membri.');
       return;
     }
-    if (comm.members.includes(user.id)) {
+    if (comm.members?.includes(user.id)) {
       alert('Fai già parte di questa comunità!');
       return;
     }
 
-    const updatedMembers = [...comm.members, user.id];
+    // Check user max 5 communities limit
+    const userCommunitiesCount = communities.filter(
+      (c) => !isCommunityExpired(c) && c.members?.includes(user.id)
+    ).length;
+    if (userCommunitiesCount >= 5) {
+      alert('⚠️ Limite raggiunto: puoi iscriverti ad un massimo di 5 comunità civiche contemporaneamente. Per iscriverti a questa comunità devi prima uscirne da un\'altra.');
+      return;
+    }
+
+    const updatedMembers = [...(comm.members || []), user.id];
     const updatedNicknames = [...(comm.memberNicknames || []), user.nickname];
     const updatedCount = updatedMembers.length;
 
@@ -296,6 +337,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
   };
 
   const filteredCommunities = communities.filter((c) => {
+    if (isCommunityExpired(c)) return false;
     if (!searchCommunityQuery.trim()) return true;
     const q = searchCommunityQuery.toLowerCase();
     return (
@@ -414,6 +456,11 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
                 {filteredCommunities.map((comm) => {
                   const isMember = user ? comm.members?.includes(user.id) : false;
                   const isSelected = selectedCommunity?.id === comm.id;
+                  
+                  const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+                  const age = Date.now() - (comm.createdAt || Date.now());
+                  const daysLeft = Math.max(0, Math.ceil((ONE_MONTH_MS - age) / (24 * 60 * 60 * 1000)));
+                  const isOfficial = (comm.memberCount || 0) >= 10;
 
                   return (
                     <div
@@ -442,6 +489,19 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
                           <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 shadow-xs">
                             Membro ✓
                           </span>
+                        )}
+                      </div>
+
+                      {/* 30-Day trial status banner */}
+                      <div className={`text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 ${
+                        isOfficial
+                          ? (isSelected ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200')
+                          : (isSelected ? 'bg-amber-900/60 text-amber-200 border border-amber-500/40' : 'bg-amber-50 text-amber-800 border border-amber-200')
+                      }`}>
+                        {isOfficial ? (
+                          <><span>✅</span> <span>Comunità Ufficiale Permanente</span></>
+                        ) : (
+                          <><span>⏳</span> <span>Prova 1 mese: {daysLeft} gg rimasti per 10 membri ({comm.memberCount}/10)</span></>
                         )}
                       </div>
 
@@ -808,25 +868,46 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
                 />
               </div>
 
+              <ComuneAutocompleteInput
+                label="Comune Sede Comunità (dall'Archivio Ufficiale) *"
+                value={newCommComune}
+                onChange={(comuneName) => setNewCommComune(comuneName)}
+                placeholder="Digita e seleziona comune (es. Milano, Somma Lombardo, Gallarate...)"
+                required
+              />
+
               <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Sede Comune e Indirizzo *</label>
+                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Via e Civico Sede (Inserimento a mano) *</label>
                 <input
                   type="text"
                   value={newCommSede}
                   onChange={(e) => setNewCommSede(e.target.value)}
-                  placeholder="es. Corso Repubblica 12 (presso Centro Civico)"
+                  placeholder="es. Corso Repubblica 12"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   required
                 />
               </div>
 
-              <ComuneAutocompleteInput
-                label="Comune Sede Comunità *"
-                value={newCommComune}
-                onChange={(comuneName) => setNewCommComune(comuneName)}
-                placeholder="Digita e seleziona comune (es. Milano, Gallarate, Roma...)"
-                required
-              />
+              <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between text-slate-800 font-bold">
+                  <label className="uppercase tracking-wider">Raggio d'Influenza Territoriale *</label>
+                  <span className="bg-emerald-700 text-white px-2.5 py-0.5 rounded-lg text-xs font-black">
+                    {newCommRadiusKm} km (max 10 km)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  value={newCommRadiusKm}
+                  onChange={(e) => setNewCommRadiusKm(Number(e.target.value))}
+                  className="w-full accent-emerald-600 cursor-pointer"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Definisce il raggio d'azione visibile sulla mappa attorno alla sede della comunità (Massimo 10 km consentito).
+                </p>
+              </div>
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Descrizione / Scopo della Comunità</label>
