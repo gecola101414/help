@@ -16,5 +16,17 @@ service cloud.firestore {
     match /help_users/{userId} {
       allow read, write: if true;
     }
+    match /help_communities/{commId} {
+      allow read, write: if true;
+      match /messages/{msgId} {
+        allow read, write: if true;
+      }
+    }
+    match /help_sponsors/{sponsorId} {
+      allow read, write: if true;
+    }
+    match /help_sponsor_initiatives/{initId} {
+      allow read, write: if true;
+    }
   }
 }

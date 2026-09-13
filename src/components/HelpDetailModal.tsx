@@ -474,9 +474,9 @@ export const HelpDetailModal: React.FC<HelpDetailModalProps> = ({
                 <MapPin className="w-3.5 h-3.5 text-slate-500" />
                 <span>{item.location.address} {item.distanceKm !== undefined ? `(${item.distanceKm} km)` : ''}</span>
               </div>
-              <div className="flex items-center space-x-1 text-amber-600 font-bold">
-                <Coins className="w-3.5 h-3.5" />
-                <span>{item.isFree ? 'Gratuito (Solidarietà)' : `${item.creditsRequired} Crediti HELP`}</span>
+              <div className="flex items-center space-x-1 text-amber-700 font-extrabold bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+                <span>🧱</span>
+                <span>{item.isFree ? 'Gratuito (0 BRIKO)' : `${item.creditsRequired} BRIKO`}</span>
               </div>
             </div>
           </div>

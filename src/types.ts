@@ -9,10 +9,64 @@ export interface UserProfile {
   };
   offers: string[]; // what this user offers to help with
   requests: string[]; // current requests or needs
-  credits: number;
+  credits: number; // BRIKO balance (Inizia con 100 BRIKO offerti dalla piattaforma)
   rating: number;
   helpedCount: number;
   karma: number; // Solidarietà Karma score
+  communityId?: string; // ID della comunità di appartenenza
+  createdAt: number;
+}
+
+export interface AreaSponsor {
+  id: string;
+  name: string;
+  category: string; // e.g. "Pizzeria & Ristorante", "Biscottificio", "Supermercato", "Commerciante Locale"
+  comune: string;
+  address?: string;
+  logoUrl?: string;
+  brikoOffered: number; // BRIKO acqisiti e offerti alla comunità
+  message: string;
+  createdAt: number;
+}
+
+export interface SponsorInitiative {
+  id: string;
+  sponsorId: string;
+  sponsorName: string;
+  category: string;
+  title: string;
+  description: string;
+  comune: string;
+  brikoRewardPerParticipant: number; // Ricompensa in BRIKO dallo sponsor a chi completa l'azione
+  totalBrikoBudget: number; // Budget BRIKO allocato dallo sponsor
+  brikoRemaining: number;
+  participantsCount: number;
+  createdAt: number;
+}
+
+export interface Community {
+  id: string;
+  name: string;
+  sedeAddress: string;
+  comune: string;
+  description: string;
+  founderId: string;
+  founderNickname: string;
+  members: string[]; // List of userIds (max 100)
+  memberNicknames?: string[];
+  memberCount: number; // Max 100
+  brikoTreasury: number; // Fondo BRIKO di comunità
+  createdAt: number;
+}
+
+export interface CommunityMessage {
+  id: string;
+  communityId: string;
+  senderId: string;
+  senderNickname: string;
+  text: string;
+  audioUrl?: string;
+  audioDuration?: number;
   createdAt: number;
 }
 

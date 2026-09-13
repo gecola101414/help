@@ -359,30 +359,42 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               />
             </div>
 
-            {/* Credits & Stats summary if user exists */}
+            {/* BRIKO & Stats summary if user exists */}
             {user && (
-              <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-3.5 space-y-2">
+              <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold">
-                      <Coins className="w-4 h-4" />
+                    <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                      🧱
                     </div>
                     <div>
-                      <div className="text-[11px] text-slate-500">Crediti HELP</div>
-                      <div className="text-base font-extrabold text-emerald-900">{user.credits} 🪙</div>
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                        Capitale BRIKO (Bricazioni)
+                      </div>
+                      <div className="text-lg font-black text-amber-950 flex items-center gap-1">
+                        <span>{user.credits ?? 100}</span>
+                        <span className="text-xs font-extrabold text-amber-700 bg-amber-200/80 px-2 py-0.5 rounded-md border border-amber-300">
+                          BRIKO
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="text-right text-xs text-slate-600">
+                  <div className="text-right text-xs text-slate-700">
                     <div>Aiuti offerti: <span className="font-bold text-slate-900">{user.helpedCount || 0}</span></div>
                     <div>Reputazione: <span className="font-bold text-slate-900">{user.rating || 5.0} ⭐</span></div>
                   </div>
                 </div>
-                <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between text-xs">
-                  <div className="flex items-center space-x-1 text-amber-700 font-bold">
+
+                <div className="text-[11px] text-amber-900 bg-white/80 p-2.5 rounded-xl border border-amber-200/80 leading-relaxed">
+                  🎁 <strong>100 BRIKO omaggio</strong> offerti dalla piattaforma al primo ingresso. Ogni gentilezza offerta o accettata vale bricazioni per incentivare il mutuo aiuto e l'economia circolare solidale!
+                </div>
+
+                <div className="pt-2 border-t border-amber-200/80 flex items-center justify-between text-xs">
+                  <div className="flex items-center space-x-1 text-amber-800 font-bold">
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>Karma Solidarietà:</span>
                   </div>
-                  <div className="font-black text-amber-800 text-sm">{user.karma || 120} punti 🔥</div>
+                  <div className="font-black text-amber-900 text-sm">{user.karma || 120} punti 🔥</div>
                 </div>
               </div>
             )}

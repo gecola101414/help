@@ -788,12 +788,12 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             </div>
           )}
 
-          {/* Free vs Credits */}
+          {/* Free vs BRIKO */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-bold text-slate-900">Gratuito (Solidarietà di vicinato)</div>
-                <div className="text-[11px] text-slate-500">Nessun credito richiesto, puro spirito di convivenza civile</div>
+                <div className="text-xs font-bold text-slate-900">Gratuito (0 BRIKO - Dono Puro)</div>
+                <div className="text-[11px] text-slate-500">Nessun BRIKO richiesto, puro spirito di convivenza civile e vicinato</div>
               </div>
               <input
                 type="checkbox"
@@ -809,22 +809,25 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             {!isFree && (
               <div className="pt-2 border-t border-slate-200">
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Crediti HELP richiesti (per servizi speciali):
+                  Valore dell'aiuto in BRIKO (bricazioni):
                 </label>
                 <div className="flex items-center space-x-3">
                   <input
                     type="number"
                     min={1}
-                    max={10}
+                    max={50}
                     value={creditsRequired}
                     onChange={(e) => setCreditsRequired(Number(e.target.value))}
-                    className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold"
+                    className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-amber-700"
                   />
-                  <div className="text-xs text-amber-600 flex items-center space-x-1 font-semibold">
-                    <Coins className="w-3.5 h-3.5" />
-                    <span>crediti HELP</span>
+                  <div className="text-xs text-amber-700 flex items-center space-x-1 font-extrabold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                    <span>🧱</span>
+                    <span>BRIKO</span>
                   </div>
                 </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Chi accetterà questo aiuto dovrà disporre dei BRIKO indicati. Guadagnerai questi BRIKO a compimento della buone azione!
+                </p>
               </div>
             )}
           </div>

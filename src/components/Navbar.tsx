@@ -71,7 +71,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
               }`}
             >
-              Storie & Classifica
+              Comunità & Sponsor BRIKO
             </button>
             <button
               onClick={() => setActiveTab('ai-assistant')}
@@ -128,9 +128,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="text-xs font-bold text-gray-800 truncate max-w-[90px]">
                   {user?.nickname || 'Ospite'}
                 </div>
-                <div className="flex items-center space-x-1 text-[11px] text-teal-700 font-semibold">
-                  <Coins className="w-3 h-3 text-teal-600" />
-                  <span>{user?.credits ?? 5} crediti</span>
+                <div className="flex items-center space-x-1 text-[11px] text-amber-700 font-extrabold bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                  <span>🧱</span>
+                  <span>{user?.credits ?? 100} BRIKO</span>
                 </div>
               </div>
             </button>

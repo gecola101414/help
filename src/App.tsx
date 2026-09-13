@@ -43,8 +43,12 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (!parsed.passcode) {
           parsed.passcode = (parsed.nickname || 'Vicino') + Math.floor(100000 + Math.random() * 900000);
-          localStorage.setItem('help_user_profile', JSON.stringify(parsed));
         }
+        // Welcome Gift: Ensure every user has at least 100 BRIKO offered by GEOKIND platform
+        if (typeof parsed.credits !== 'number' || parsed.credits < 100) {
+          parsed.credits = 100;
+        }
+        localStorage.setItem('help_user_profile', JSON.stringify(parsed));
         return parsed;
       } catch (e) { }
     }
@@ -57,7 +61,7 @@ export default function App() {
       location: { lat: 45.6836, lng: 8.7071, address: 'Somma Lombardo (VA)' },
       offers: ['Spesa e Commissioni a Domicilio', 'Piccoli Lavoretti Domestici'],
       requests: [],
-      credits: 5,
+      credits: 100, // 100 BRIKO offerti dalla piattaforma al primo ingresso
       rating: 5.0,
       helpedCount: 2,
       karma: 120,
@@ -639,7 +643,9 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'community' && <CommunityWall />}
+        {activeTab === 'community' && (
+          <CommunityWall user={user} onSaveProfile={handleSaveProfile} />
+        )}
 
         {activeTab === 'ai-assistant' && <AiHelpAssistant />}
       </main>
