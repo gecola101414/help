@@ -834,25 +834,26 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
 
           {/* Duration Selector */}
           <div className="space-y-2 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-            <label className="block text-xs font-bold text-slate-700">Durata dell'annuncio (Cogli l'attimo)</label>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Durata di validità della Gentilezza</label>
             <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-              Gli annunci svaniscono dopo la scadenza per mantenere l'ecosistema in tempo reale.
+              Scegli quanto tempo rimarrà visibile il tuo annuncio. Alla scadenza o se lo annulli, scompare automaticamente per mantenere la bacheca aggiornata.
             </p>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
               {[
-                { label: '10 min', value: 10 },
-                { label: '30 min', value: 30 },
-                { label: '2 ore', value: 120 },
-                { label: '24 ore', value: 1440 },
+                { label: '1 Ora', value: 60 },
+                { label: '1 Giorno', value: 1440 },
+                { label: '1 Settimana', value: 10080 },
+                { label: '1 Mese', value: 43200 },
+                { label: '1 Anno', value: 525600 },
               ].map(opt => (
                 <button
                   key={opt.value}
                   type="button"
                   onClick={() => setDurationMinutes(opt.value)}
-                  className={`py-2 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                  className={`py-2 px-1 rounded-xl border text-[10px] sm:text-xs font-bold transition-all cursor-pointer text-center ${
                     durationMinutes === opt.value
-                      ? 'bg-slate-800 text-white border-slate-800 shadow-md'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-md ring-2 ring-emerald-400'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
                   {opt.label}

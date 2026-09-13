@@ -9,7 +9,7 @@ import { HelpDetailModal } from './components/HelpDetailModal';
 import { HelpFeed } from './components/HelpFeed';
 import { MyHelpSection } from './components/MyHelpSection';
 import { CommunityWall } from './components/CommunityWall';
-import { AiHelpAssistant } from './components/AiHelpAssistant';
+import { SponsorPage } from './components/SponsorPage';
 import { MapView } from './components/MapView';
 import { GeokindLogo } from './components/GeokindLogo';
 
@@ -58,7 +58,7 @@ export default function App() {
       id: 'user-' + Math.random().toString(36).substring(2, 9),
       nickname: defaultName,
       passcode: defaultCode,
-      location: { lat: 45.6836, lng: 8.7071, address: 'Somma Lombardo (VA)' },
+      location: { lat: 0, lng: 0, address: 'Posizione non condivisa' },
       offers: ['Spesa e Commissioni a Domicilio', 'Piccoli Lavoretti Domestici'],
       requests: [],
       credits: 100, // 100 BRIKO offerti dalla piattaforma al primo ingresso
@@ -644,10 +644,12 @@ export default function App() {
         )}
 
         {activeTab === 'community' && (
-          <CommunityWall user={user} onSaveProfile={handleSaveProfile} />
+          <CommunityWall user={user} onSaveProfile={handleSaveProfile} initialSubTab="communities" />
         )}
 
-        {activeTab === 'ai-assistant' && <AiHelpAssistant />}
+        {activeTab === 'sponsors' && (
+          <SponsorPage user={user} onSaveProfile={handleSaveProfile} />
+        )}
       </main>
 
       {/* Modals */}
@@ -687,7 +689,7 @@ export default function App() {
           </div>
           <div className="flex items-center space-x-4">
             <span className="text-teal-800 font-bold bg-teal-50 px-3 py-1 rounded-full border border-teal-100">
-              2026 @Gimondo Domenico
+              2026@Gimondo Domenico
             </span>
             <span>•</span>
             <span>Senza Registrazioni Obbligatorie</span>

@@ -36,6 +36,13 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
 
   // Filter items based on type, tracking mode, category, distance, creator's dynamic radius, and search query
   const filteredItems = items.filter((item) => {
+    // Exclude cancelled or expired items ("se si annulla scompare")
+    if (item.status === 'cancelled') return false;
+    if (item.durationMinutes && item.durationMinutes > 0) {
+      const expiresAt = item.createdAt + item.durationMinutes * 60000;
+      if (Date.now() > expiresAt) return false;
+    }
+
     // If following someone, only show their items (and my own items so I can still see mine, but the user said "il resto degli annunci non li devo vedere" so let's STRICTLY show only the followed user's items)
     if (followedUserId && item.userId !== followedUserId) {
       return false;
@@ -107,7 +114,7 @@ export const HelpFeed: React.FC<HelpFeedProps> = ({
           </h1>
           <p className="text-teal-100 text-sm sm:text-base leading-relaxed">
             Condividi la tua posizione, metti a disposizione una gentilezza o chiedi ciò di cui hai bisogno nel raggio che preferisci. <br />
-            <strong className="text-white">Autore:</strong> 2026 @Gimondo Domenico
+            <strong className="text-white">Autore:</strong> 2026@Gimondo Domenico
           </p>
           <div className="pt-2 flex flex-wrap gap-3">
             <button

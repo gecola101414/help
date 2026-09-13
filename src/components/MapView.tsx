@@ -114,6 +114,13 @@ export const MapView: React.FC<MapViewProps> = ({
   // Filtered items based on active criteria
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      // Exclude cancelled or expired items ("se si annulla scompare")
+      if (item.status === 'cancelled') return false;
+      if (item.durationMinutes && item.durationMinutes > 0) {
+        const expiresAt = item.createdAt + item.durationMinutes * 60000;
+        if (Date.now() > expiresAt) return false;
+      }
+
       // Follow filter
       if (followedUserId && item.userId !== followedUserId) {
         return false;

@@ -5,16 +5,26 @@ import {
   Store, UserPlus, LogOut, X, Loader2, Award, Play, Pause
 } from 'lucide-react';
 import { UserProfile, Community, CommunityMessage, AreaSponsor, SponsorInitiative } from '../types';
+import { ComuneAutocompleteInput } from './ComuneAutocompleteInput';
 import { db } from '../lib/firebase';
 import { collection, onSnapshot, addDoc, doc, updateDoc, setDoc, query, orderBy } from 'firebase/firestore';
 
 interface CommunityWallProps {
   user: UserProfile | null;
   onSaveProfile?: (updated: Partial<UserProfile>) => void;
+  initialSubTab?: 'communities' | 'stories';
 }
 
-export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfile }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'communities' | 'sponsors' | 'stories'>('communities');
+export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfile, initialSubTab = 'communities' }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'communities' | 'stories'>(
+    initialSubTab === 'stories' ? 'stories' : 'communities'
+  );
+
+  useEffect(() => {
+    if (initialSubTab && initialSubTab !== 'sponsors' as any) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
   
   // State for Communities
   const [communities, setCommunities] = useState<Community[]>([]);
@@ -25,7 +35,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
   // Create Community Form
   const [newCommName, setNewCommName] = useState('');
   const [newCommSede, setNewCommSede] = useState('');
-  const [newCommComune, setNewCommComune] = useState(() => user?.location?.address?.split(',')[0] || 'Somma Lombardo');
+  const [newCommComune, setNewCommComune] = useState(() => (user?.location?.address && user.location.address !== 'Posizione non condivisa' ? user.location.address.split(',')[0] : ''));
   const [newCommDesc, setNewCommDesc] = useState('');
   const [isCreatingComm, setIsCreatingComm] = useState(false);
 
@@ -36,29 +46,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const recordingTimerRef = useRef<any>(null);
   const [activeAudioMessageId, setActiveAudioMessageId] = useState<string | null>(null);
-
-  // State for Sponsors & Sponsored Initiatives
-  const [sponsors, setSponsors] = useState<AreaSponsor[]>([]);
-  const [initiatives, setInitiatives] = useState<SponsorInitiative[]>([]);
-  const [isCreateSponsorOpen, setIsCreateSponsorOpen] = useState(false);
-  const [isCreateInitiativeOpen, setIsCreateInitiativeOpen] = useState(false);
-  
-  const [sponsorName, setSponsorName] = useState('');
-  const [sponsorCategory, setSponsorCategory] = useState('Commerciante Locale');
-  const [sponsorComune, setSponsorComune] = useState(() => user?.location?.address?.split(',')[0] || 'Somma Lombardo');
-  const [sponsorBriko, setSponsorBriko] = useState<number>(500);
-  const [sponsorMessage, setSponsorMessage] = useState('');
-  const [isCreatingSponsor, setIsCreatingSponsor] = useState(false);
-
-  // Form for New Sponsored Initiative
-  const [initSponsorName, setInitSponsorName] = useState('Pizzeria & Focacceria Da Domenico');
-  const [initTitle, setInitTitle] = useState('');
-  const [initCategory, setInitCategory] = useState('Ambiente & Pulizia');
-  const [initComune, setInitComune] = useState(() => user?.location?.address?.split(',')[0] || 'Somma Lombardo');
-  const [initDesc, setInitDesc] = useState('');
-  const [initReward, setInitReward] = useState<number>(100);
-  const [initBudget, setInitBudget] = useState<number>(500);
-  const [isCreatingInitiative, setIsCreatingInitiative] = useState(false);
 
   // Initial demo communities if database is empty
   const defaultCommunities: Community[] = [
@@ -92,58 +79,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
     }
   ];
 
-  const defaultSponsors: AreaSponsor[] = [
-    {
-      id: 'spon-1',
-      name: 'Pizzeria & Focacceria Da Domenico',
-      category: 'Ristorazione & Pizzeria',
-      comune: 'Somma Lombardo',
-      brikoOffered: 1000,
-      message: 'Offriamo 1.000 BRIKO alla comunità locale per incentivare la gentilezza e aiutare i nostri vicini di casa!',
-      createdAt: Date.now() - 86400000 * 2,
-    },
-    {
-      id: 'spon-2',
-      name: 'Biscottificio Lombardo Artigianale',
-      category: 'Alimentari & Dolciaria',
-      comune: 'Gallarate',
-      brikoOffered: 2500,
-      message: 'Sosteniamo le buone azioni del territorio finanziando il capitale BRIKO per chi si mette a disposizione degli altri.',
-      createdAt: Date.now() - 86400000 * 4,
-    }
-  ];
-
-  const defaultInitiatives: SponsorInitiative[] = [
-    {
-      id: 'init-1',
-      sponsorId: 'spon-1',
-      sponsorName: 'Pizzeria & Focacceria Da Domenico',
-      category: 'Ambiente & Verde Civico',
-      title: 'Pulizia e Cura del Parco di Somma Lombardo',
-      description: 'Offriamo 100 BRIKO a tutti i cittadini che partecipano alla sistemazione e rimozione cartacce nel parco del castello!',
-      comune: 'Somma Lombardo',
-      brikoRewardPerParticipant: 100,
-      totalBrikoBudget: 500,
-      brikoRemaining: 400,
-      participantsCount: 1,
-      createdAt: Date.now() - 86400000 * 1,
-    },
-    {
-      id: 'init-2',
-      sponsorId: 'spon-2',
-      sponsorName: 'Biscottificio Lombardo Artigianale',
-      category: 'Supporto Anziani',
-      title: 'Spesa e consegna farmaci per i nonni soli del quartiere',
-      description: 'Il Biscottificio premia con 150 BRIKO chiunque offra un passaggio o aiuti un anziano nella spesa settimanale.',
-      comune: 'Gallarate',
-      brikoRewardPerParticipant: 150,
-      totalBrikoBudget: 900,
-      brikoRemaining: 750,
-      participantsCount: 1,
-      createdAt: Date.now() - 86400000 * 2,
-    }
-  ];
-
   // 1. Real-time Firestore sync for Communities
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -163,56 +98,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
       });
     } catch {
       setCommunities(defaultCommunities);
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, []);
-
-  // 2. Real-time Firestore sync for Area Sponsors
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    try {
-      unsubscribe = onSnapshot(collection(db, 'help_sponsors'), (snap) => {
-        const fetched: AreaSponsor[] = [];
-        snap.forEach((d) => {
-          fetched.push({ id: d.id, ...d.data() } as AreaSponsor);
-        });
-        if (fetched.length > 0) {
-          setSponsors(fetched);
-        } else {
-          setSponsors(defaultSponsors);
-        }
-      }, () => {
-        setSponsors(defaultSponsors);
-      });
-    } catch {
-      setSponsors(defaultSponsors);
-    }
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, []);
-
-  // 3. Real-time Firestore sync for Sponsored Initiatives
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-    try {
-      unsubscribe = onSnapshot(collection(db, 'help_sponsor_initiatives'), (snap) => {
-        const fetched: SponsorInitiative[] = [];
-        snap.forEach((d) => {
-          fetched.push({ id: d.id, ...d.data() } as SponsorInitiative);
-        });
-        if (fetched.length > 0) {
-          setInitiatives(fetched);
-        } else {
-          setInitiatives(defaultInitiatives);
-        }
-      }, () => {
-        setInitiatives(defaultInitiatives);
-      });
-    } catch {
-      setInitiatives(defaultInitiatives);
     }
     return () => {
       if (unsubscribe) unsubscribe();
@@ -410,114 +295,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
     } catch (e) {}
   };
 
-  // Create Sponsor Submit
-  const handleCreateSponsorSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!sponsorName.trim() || !sponsorMessage.trim() || !user) return;
-
-    setIsCreatingSponsor(true);
-    const sponsorId = 'sponsor-' + Date.now();
-    const newSponsorData: AreaSponsor = {
-      id: sponsorId,
-      name: sponsorName.trim(),
-      category: sponsorCategory,
-      comune: sponsorComune.trim(),
-      brikoOffered: Number(sponsorBriko) || 500,
-      message: sponsorMessage.trim(),
-      createdAt: Date.now(),
-    };
-
-    try {
-      await setDoc(doc(db, 'help_sponsors', sponsorId), newSponsorData);
-      setSponsors((prev) => [newSponsorData, ...prev]);
-      setIsCreateSponsorOpen(false);
-      setSponsorName('');
-      setSponsorMessage('');
-      alert(`🎉 Grazie! La tua attività '${newSponsorData.name}' ha offerto ${newSponsorData.brikoOffered} BRIKO alla comunità di ${newSponsorData.comune}!`);
-    } catch (e) {
-      console.error('Create sponsor error:', e);
-    } finally {
-      setIsCreatingSponsor(false);
-    }
-  };
-
-  // Create Sponsored Initiative Submit
-  const handleCreateInitiativeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!initTitle.trim() || !initDesc.trim() || !user) return;
-
-    setIsCreatingInitiative(true);
-    const initId = 'init-' + Date.now();
-    const newInitiative: SponsorInitiative = {
-      id: initId,
-      sponsorId: 'spon-user-' + user.id,
-      sponsorName: initSponsorName.trim() || 'Sponsor Civico ' + user.nickname,
-      category: initCategory,
-      title: initTitle.trim(),
-      description: initDesc.trim(),
-      comune: initComune.trim(),
-      brikoRewardPerParticipant: Number(initReward) || 100,
-      totalBrikoBudget: Number(initBudget) || 500,
-      brikoRemaining: Number(initBudget) || 500,
-      participantsCount: 0,
-      createdAt: Date.now(),
-    };
-
-    try {
-      await setDoc(doc(db, 'help_sponsor_initiatives', initId), newInitiative);
-      setInitiatives((prev) => [newInitiative, ...prev]);
-      setIsCreateInitiativeOpen(false);
-      setInitTitle('');
-      setInitDesc('');
-      alert(`🌟 Campagna di Buona Azione Creata! '${newInitiative.title}' con budget di ${newInitiative.totalBrikoBudget} BRIKO in palio per la comunità!`);
-    } catch (err) {
-      console.error('Error creating initiative:', err);
-    } finally {
-      setIsCreatingInitiative(false);
-    }
-  };
-
-  // Claim Sponsored Initiative Reward
-  const handleClaimInitiativeReward = async (init: SponsorInitiative) => {
-    if (!user) {
-      alert('Effettua prima l\'accesso per partecipare ed accreditarti i BRIKO.');
-      return;
-    }
-    if (init.brikoRemaining < init.brikoRewardPerParticipant) {
-      alert('Questa iniziativa ha esaurito il budget BRIKO messo a disposizione dallo sponsor!');
-      return;
-    }
-
-    const reward = init.brikoRewardPerParticipant;
-    const newRemaining = init.brikoRemaining - reward;
-    const newParticipants = init.participantsCount + 1;
-
-    // Update local user profile BRIKO balance
-    const updatedUserCredits = (user.credits ?? 100) + reward;
-    if (onSaveProfile) {
-      onSaveProfile({ credits: updatedUserCredits });
-    }
-
-    // Update initiative document
-    setInitiatives((prev) =>
-      prev.map((i) =>
-        i.id === init.id
-          ? { ...i, brikoRemaining: newRemaining, participantsCount: newParticipants }
-          : i
-      )
-    );
-
-    try {
-      await updateDoc(doc(db, 'help_sponsor_initiatives', init.id), {
-        brikoRemaining: newRemaining,
-        participantsCount: newParticipants,
-      });
-      alert(`🎉 Congratulazioni ${user.nickname}! Hai completato la buona azione per '${init.title}' ed hai guadagnato +${reward} BRIKO dallo Sponsor ${init.sponsorName}! Il tuo nuovo saldo è di ${updatedUserCredits} BRIKO.`);
-    } catch (e) {
-      console.warn('Update initiative error:', e);
-    }
-  };
-
   const filteredCommunities = communities.filter((c) => {
     if (!searchCommunityQuery.trim()) return true;
     const q = searchCommunityQuery.toLowerCase();
@@ -528,8 +305,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
     );
   });
 
-  const totalSponsorBriko = sponsors.reduce((acc, s) => acc + (s.brikoOffered || 0), 0);
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-in fade-in duration-300">
       
@@ -538,14 +313,14 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
         <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
         <div className="max-w-3xl space-y-4 relative z-10">
           <div className="inline-flex items-center space-x-2 bg-emerald-700/80 border border-emerald-400/40 px-3.5 py-1 rounded-full text-xs font-bold">
-            <span>🧱 Bricazioni della Gentilezza (BRIKO)</span>
+            <span>🏛️ Comunità Civiche di Quartiere (BRIKO)</span>
           </div>
           <h1 className="text-3xl sm:text-5xl font-black tracking-tight font-sans">
-            Comunità Civiche & Sponsor di Area BRIKO
+            Comunità Civiche & Mutuo Soccorso
           </h1>
           <p className="text-emerald-100 text-sm sm:text-base leading-relaxed">
             Nel Sud e nella tradizione italiana la <em>bricazione (BRIKO)</em> rappresenta il valore di un aiuto o un debito di gratitudine. 
-            <strong> Ogni nuovo cittadino riceve subito 100 BRIKO regalati dalla piattaforma al primo ingresso</strong>. Gli altri BRIKO si guadagnano aiutando i vicini!
+            Ogni comunità ospita fino a <strong>massimo 100 membri</strong> per garantire vero spirito di vicinato, con bacheca comune e chat con messaggi vocali.
           </p>
           <div className="pt-2 flex flex-wrap gap-3">
             <button
@@ -553,14 +328,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
               className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center space-x-2 cursor-pointer"
             >
               <Building2 className="w-4 h-4" />
-              <span>+ Fonda una Nuova Comunità</span>
-            </button>
-            <button
-              onClick={() => setIsCreateSponsorOpen(true)}
-              className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center space-x-2 cursor-pointer"
-            >
-              <Store className="w-4 h-4" />
-              <span>🏬 Diventa Sponsor di Area (Offri BRIKO)</span>
+              <span>+ Fonda una Nuova Comunità Civica</span>
             </button>
           </div>
         </div>
@@ -579,19 +347,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
         >
           <Building2 className="w-4 h-4" />
           <span>Comunità Civiche ({communities.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('sponsors')}
-          className={`flex-1 min-w-[150px] py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
-            activeSubTab === 'sponsors'
-              ? 'bg-amber-600 text-white shadow-md'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Store className="w-4 h-4" />
-          <span>Sponsor di Area ({sponsors.length})</span>
         </button>
 
         <button
@@ -934,165 +689,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
         </div>
       )}
 
-      {/* SUB-TAB 2: SPONSORS */}
-      {activeSubTab === 'sponsors' && (
-        <div className="space-y-6">
-          
-          {/* Sponsor Banner */}
-          <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 rounded-3xl p-6 sm:p-8 text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="space-y-2 max-w-2xl">
-              <div className="inline-flex items-center space-x-2 bg-amber-800/60 border border-amber-300/40 px-3 py-1 rounded-full text-xs font-bold">
-                <Store className="w-4 h-4 text-amber-200" />
-                <span>Incrementa il Capitale BRIKO del tuo Territorio</span>
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold">Sponsor di Area & Commercianti</h2>
-              <p className="text-amber-100 text-xs sm:text-sm leading-relaxed">
-                Negozi, pizzerie, farmacie e aziende locali possono acquistare pacchetti BRIKO da offrire ai cittadini del quartiere. Ogni BRIKO donato finanzia e premia le buone azioni del vicinato!
-              </p>
-            </div>
-
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-4 text-center shrink-0 min-w-[220px]">
-              <div className="text-[11px] font-bold text-amber-100 uppercase tracking-wider">Capitale BRIKO Donato</div>
-              <div className="text-3xl font-black text-white mt-1">🧱 {totalSponsorBriko.toLocaleString()} BRIKO</div>
-              <div className="mt-3 space-y-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateSponsorOpen(true)}
-                  className="w-full bg-white text-amber-900 font-bold py-2 px-3 rounded-xl text-xs transition-all hover:bg-amber-50 cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
-                >
-                  <Store className="w-4 h-4 text-amber-600" />
-                  <span>+ Offri BRIKO come Sponsor</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateInitiativeOpen(true)}
-                  className="w-full bg-amber-400 text-slate-950 font-black py-2 px-3 rounded-xl text-xs transition-all hover:bg-amber-300 cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
-                >
-                  <Sparkles className="w-4 h-4 text-slate-900" />
-                  <span>+ Crea Iniziativa col tuo Budget BRIKO</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* SECTION: Sponsored Initiatives / Esigenze di Buone Azioni lanciate dagli Sponsor */}
-          <div className="space-y-4 pt-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                  <Award className="w-5 h-5 text-amber-500" />
-                  <span>Esigenze & Iniziative di Buone Azioni Sponsorizzate</span>
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Gli sponsor usano i loro BRIKO acquistati per premiare direttamente i cittadini che eseguono buone azioni per la comunità!
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsCreateInitiativeOpen(true)}
-                className="hidden sm:flex items-center space-x-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs"
-              >
-                <span>+ Pubblica Esigenza Sponsorizzata</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {initiatives.map((init) => (
-                <div
-                  key={init.id}
-                  className="bg-white rounded-2xl border-2 border-amber-200/80 shadow-md p-6 space-y-4 relative overflow-hidden hover:border-amber-400 transition-all"
-                >
-                  <div className="absolute top-0 right-0 bg-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-wider px-3 py-1 rounded-bl-xl">
-                    Sponsorizzato • {init.comune}
-                  </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-md">
-                      {init.category}
-                    </span>
-                    <h4 className="text-lg font-black text-slate-900 pt-1 leading-snug">{init.title}</h4>
-                    <div className="text-xs font-bold text-slate-600 flex items-center gap-1">
-                      <span>Proposto da Sponsor:</span>
-                      <strong className="text-amber-700">{init.sponsorName}</strong>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-600 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    {init.description}
-                  </p>
-
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between text-xs">
-                    <div>
-                      <div className="text-[10px] text-amber-800 font-bold uppercase">Ricompensa a Cittadino</div>
-                      <div className="text-base font-black text-amber-700">🧱 +{init.brikoRewardPerParticipant} BRIKO</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-500 font-bold uppercase">Budget Rimanente</div>
-                      <div className="text-xs font-extrabold text-slate-800">
-                        {init.brikoRemaining} / {init.totalBrikoBudget} BRIKO
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleClaimInitiativeReward(init)}
-                    disabled={init.brikoRemaining < init.brikoRewardPerParticipant}
-                    className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white font-black py-2.5 rounded-xl text-xs transition-all shadow-md flex items-center justify-center space-x-2 cursor-pointer active:scale-95"
-                  >
-                    <Check className="w-4 h-4 text-emerald-300" />
-                    <span>Partecipa & Guadagna +{init.brikoRewardPerParticipant} BRIKO</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Registered Area Sponsors Grid */}
-          <div className="space-y-4 pt-4">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Store className="w-4 h-4 text-amber-600" />
-              <span>Attività & Sponsor Registrati ({sponsors.length})</span>
-            </h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {sponsors.map((spon) => (
-                <div key={spon.id} className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-4 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-base border border-amber-200 shrink-0">
-                        🏪
-                      </div>
-                      <div>
-                        <h4 className="text-base font-extrabold text-slate-900">{spon.name}</h4>
-                        <span className="text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                          {spon.category}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-3 rounded-xl text-xs text-slate-600 leading-relaxed italic border border-slate-100">
-                    "{spon.message}"
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                    <span className="text-slate-500 font-medium flex items-center gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-amber-600" />
-                      <span>{spon.comune}</span>
-                    </span>
-                    <span className="font-extrabold text-amber-600 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                      🧱 {spon.brikoOffered} BRIKO Donati
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-        </div>
-      )}
-
       {/* SUB-TAB 3: STORIES & LEADERBOARD */}
       {activeSubTab === 'stories' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1224,17 +820,13 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Comune *</label>
-                <input
-                  type="text"
-                  value={newCommComune}
-                  onChange={(e) => setNewCommComune(e.target.value)}
-                  placeholder="es. Somma Lombardo, Milano, Gallarate..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  required
-                />
-              </div>
+              <ComuneAutocompleteInput
+                label="Comune Sede Comunità *"
+                value={newCommComune}
+                onChange={(comuneName) => setNewCommComune(comuneName)}
+                placeholder="Digita e seleziona comune (es. Milano, Gallarate, Roma...)"
+                required
+              />
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Descrizione / Scopo della Comunità</label>
@@ -1254,223 +846,6 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({ user, onSaveProfil
               >
                 {isCreatingComm ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 <span>Crea e Apri Comunità (500 BRIKO Fondo Iniziale)</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Offrire BRIKO come Sponsor */}
-      {isCreateSponsorOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200">
-            <div className="bg-amber-600 p-5 text-white flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Store className="w-5 h-5 text-amber-200" />
-                <span>Diventa Sponsor di Area BRIKO</span>
-              </h3>
-              <button onClick={() => setIsCreateSponsorOpen(false)} className="text-white hover:opacity-80 p-1 cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSponsorSubmit} className="p-6 space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Nome Attività / Insegna / Azienda *</label>
-                <input
-                  type="text"
-                  value={sponsorName}
-                  onChange={(e) => setSponsorName(e.target.value)}
-                  placeholder="es. Pizzeria Da Gino, Farmacia Centrale..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Categoria Commerciale</label>
-                <select
-                  value={sponsorCategory}
-                  onChange={(e) => setSponsorCategory(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                >
-                  <option value="Ristorazione & Pizzeria">Ristorazione & Pizzeria</option>
-                  <option value="Alimentari & Supermercato">Alimentari & Supermercato</option>
-                  <option value="Farmacia & Salute">Farmacia & Salute</option>
-                  <option value="Commerciante Locale">Commerciante Locale</option>
-                  <option value="Azienda del Territorio">Azienda del Territorio</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Comune di Riferimento *</label>
-                <input
-                  type="text"
-                  value={sponsorComune}
-                  onChange={(e) => setSponsorComune(e.target.value)}
-                  placeholder="es. Somma Lombardo, Gallarate, Milano..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Quantità di BRIKO Acquistati & Offerti *</label>
-                <select
-                  value={sponsorBriko}
-                  onChange={(e) => setSponsorBriko(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-amber-700 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                >
-                  <option value={500}>🧱 500 BRIKO (Pacchetto Base)</option>
-                  <option value={1000}>🧱 1.000 BRIKO (Pacchetto Quartiere)</option>
-                  <option value={2500}>🧱 2.500 BRIKO (Pacchetto Cittadino)</option>
-                  <option value={5000}>🧱 5.000 BRIKO (Sponsor Ufficiale)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Messaggio alla Comunità *</label>
-                <textarea
-                  value={sponsorMessage}
-                  onChange={(e) => setSponsorMessage(e.target.value)}
-                  rows={3}
-                  placeholder="es. Sosteniamo i nostri vicini finanziando la rete di aiuti di quartiere!"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={isCreatingSponsor}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {isCreatingSponsor ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                <span>Conferma Offerta Sponsor ({sponsorBriko} BRIKO)</span>
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Creare una Campagna / Esigenza di Buona Azione col Budget BRIKO dello Sponsor */}
-      {isCreateInitiativeOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200">
-            <div className="bg-gradient-to-r from-amber-600 to-amber-700 p-5 text-white flex items-center justify-between">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-amber-200" />
-                <span>Pubblica Iniziativa Sponsorizzata BRIKO</span>
-              </h3>
-              <button onClick={() => setIsCreateInitiativeOpen(false)} className="text-white hover:opacity-80 p-1 cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateInitiativeSubmit} className="p-6 space-y-4 text-xs">
-              <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl text-amber-950 leading-relaxed">
-                <strong>Come funziona:</strong> Metti a disposizione il tuo budget BRIKO acquistato come Sponsor per finanziare e premiare i cittadini che eseguono buone azioni concrete per la comunità!
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Nome Sponsor / Insegna *</label>
-                <input
-                  type="text"
-                  value={initSponsorName}
-                  onChange={(e) => setInitSponsorName(e.target.value)}
-                  placeholder="es. Pizzeria Da Domenico"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Titolo della Buona Azione Richiesta *</label>
-                <input
-                  type="text"
-                  value={initTitle}
-                  onChange={(e) => setInitTitle(e.target.value)}
-                  placeholder="es. Pulizia Parco Comunale o Assistenza Anziani"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Categoria Iniziativa</label>
-                <select
-                  value={initCategory}
-                  onChange={(e) => setInitCategory(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                >
-                  <option value="Ambiente & Verde Civico">Ambiente & Verde Civico</option>
-                  <option value="Supporto Anziani">Supporto Anziani</option>
-                  <option value="Assistenza & Spesa">Assistenza & Spesa</option>
-                  <option value="Doposcuola & Studio">Doposcuola & Studio</option>
-                  <option value="Condivisione Attrezzi">Condivisione Attrezzi</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Comune *</label>
-                <input
-                  type="text"
-                  value={initComune}
-                  onChange={(e) => setInitComune(e.target.value)}
-                  placeholder="es. Somma Lombardo, Gallarate..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-semibold focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Descrizione Iniziativa *</label>
-                <textarea
-                  value={initDesc}
-                  onChange={(e) => setInitDesc(e.target.value)}
-                  rows={3}
-                  placeholder="Spiega cosa devono fare i cittadini e come verrà accreditata la ricompensa BRIKO..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Premio a Partecipante *</label>
-                  <select
-                    value={initReward}
-                    onChange={(e) => setInitReward(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-amber-700 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  >
-                    <option value={50}>🧱 +50 BRIKO</option>
-                    <option value={100}>🧱 +100 BRIKO</option>
-                    <option value={150}>🧱 +150 BRIKO</option>
-                    <option value={200}>🧱 +200 BRIKO</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Budget Totale *</label>
-                  <select
-                    value={initBudget}
-                    onChange={(e) => setInitBudget(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-amber-700 focus:ring-2 focus:ring-amber-500 focus:outline-none"
-                  >
-                    <option value={500}>🧱 500 BRIKO</option>
-                    <option value={1000}>🧱 1.000 BRIKO</option>
-                    <option value={2500}>🧱 2.500 BRIKO</option>
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isCreatingInitiative}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                {isCreatingInitiative ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                <span>Lancia Iniziativa e Metti in Palio {initBudget} BRIKO</span>
               </button>
             </form>
           </div>

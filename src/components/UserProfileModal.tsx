@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, MapPin, Sparkles, CheckCircle2, ShieldAlert, Coins, Plus, Trash2, RotateCcw, Loader2, KeyRound, Copy, Check, LogIn, UserCheck, ShieldCheck } from 'lucide-react';
+import { X, MapPin, Sparkles, CheckCircle2, ShieldAlert, Coins, Plus, Trash2, RotateCcw, Loader2, KeyRound, Copy, Check, LogIn, UserCheck, ShieldCheck, Navigation } from 'lucide-react';
 import { UserProfile, DEFAULT_HELP_CATEGORIES } from '../types';
 import { resolveAddressGeocode } from '../services/comuniService';
+import { ComuneAutocompleteInput } from './ComuneAutocompleteInput';
 import { db } from '../lib/firebase';
 import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
 import { accreditUser, generateSuggestedPasscode, loginWithCredentials } from '../services/accreditationService';
@@ -26,9 +27,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   // Profile form state
   const [nickname, setNickname] = useState(user?.nickname || 'Vicino' + Math.floor(Math.random() * 900 + 100));
   const [passcode, setPasscode] = useState(user?.passcode || generateSuggestedPasscode(user?.nickname || 'Vicino'));
-  const [address, setAddress] = useState(user?.location?.address || 'Somma Lombardo (VA)');
-  const [lat, setLat] = useState(user?.location?.lat || 45.6836);
-  const [lng, setLng] = useState(user?.location?.lng || 8.7071);
+  const [address, setAddress] = useState(user?.location?.address || 'Posizione non condivisa');
+  const [lat, setLat] = useState(user?.location?.lat || 0);
+  const [lng, setLng] = useState(user?.location?.lng || 0);
   const [offers, setOffers] = useState<string[]>(user?.offers || ['Spesa e Commissioni a Domicilio', 'Piccoli Lavoretti Domestici']);
   const [customOffer, setCustomOffer] = useState('');
 
@@ -334,28 +335,64 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               </p>
             </div>
 
-            {/* Location */}
-            <div className="space-y-1.5">
+            {/* Location & GPS Controls */}
+            <div className="space-y-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
               <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
-                  La tua Posizione (per trovare aiuti nel raggio locale)
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                  Condivisione Posizione & Comune
                 </label>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                  address !== 'Posizione non condivisa' && (lat !== 0 || lng !== 0)
+                    ? 'bg-emerald-100 text-emerald-800'
+                    : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {address !== 'Posizione non condivisa' && (lat !== 0 || lng !== 0) ? '🟢 Posizione Condivisa' : '⚪ Posizione Disattivata'}
+                </span>
+              </div>
+
+              {/* Toggle Buttons */}
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={handleDetectLocation}
-                  className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center space-x-1 cursor-pointer"
+                  className="py-2.5 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer bg-emerald-600 text-white border-emerald-600 shadow-sm hover:bg-emerald-700"
                 >
-                  <MapPin className="w-3.5 h-3.5" />
-                  <span>Rileva GPS</span>
+                  <Navigation className="w-3.5 h-3.5" />
+                  <span>Rileva GPS Attuale</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddress('Posizione non condivisa');
+                    setLat(0);
+                    setLng(0);
+                  }}
+                  className="py-2.5 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                >
+                  <X className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Non Condividere GPS</span>
                 </button>
               </div>
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm"
-                placeholder="es. Somma Lombardo (VA), Via Roma..."
-                required
+
+              {/* Comune Selector with 7904 official Italian Municipalities */}
+              <ComuneAutocompleteInput
+                label="Oppure seleziona un Comune dall'elenco ufficiale:"
+                value={address === 'Posizione non condivisa' ? '' : address}
+                onChange={(comuneName, item) => {
+                  if (!comuneName) {
+                    setAddress('Posizione non condivisa');
+                    setLat(0);
+                    setLng(0);
+                  } else {
+                    setAddress(item ? `${item.nome} (${item.sigla})` : comuneName);
+                    if (item) {
+                      setLat(item.lat);
+                      setLng(item.lng);
+                    }
+                  }
+                }}
+                placeholder="Digita il tuo comune (es. Milano, Roma, Gallarate...)"
               />
             </div>
 

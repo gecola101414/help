@@ -32,10 +32,10 @@ export const GeokindLogo: React.FC<GeokindLogoProps> = ({
   return (
     <div
       onClick={onClick}
-      className={`inline-flex items-center space-x-2.5 ${onClick ? 'cursor-pointer select-none group' : ''}`}
+      className={`inline-flex items-center -space-x-0.5 ${onClick ? 'cursor-pointer select-none group' : ''}`}
     >
       {/* Globe Icon in 3D effect with Parallels, Meridians & Stylized G */}
-      <div className="relative shrink-0 flex items-center justify-center transition-transform group-hover:scale-105">
+      <div className="relative shrink-0 flex items-center justify-center transition-transform group-hover:scale-105 z-10">
         <svg
           className={`${iconSizes[size]} drop-shadow-md`}
           viewBox="0 0 44 44"
@@ -94,7 +94,7 @@ export const GeokindLogo: React.FC<GeokindLogoProps> = ({
       </div>
 
       {/* Testo Logo: [G-Mondo] + eo + K (Rossa) + ind */}
-      <div className="flex flex-col">
+      <div className="flex flex-col pl-1">
         <div className={`flex items-baseline font-black tracking-tighter leading-none ${textSizes[size]}`}>
           <span className="text-[#0D9488] font-black">eo</span>
           <span className={`text-[#DC2626] font-black px-0.5 ${kSizes[size]}`}>K</span>
@@ -102,7 +102,7 @@ export const GeokindLogo: React.FC<GeokindLogoProps> = ({
         </div>
         {showSubtext && (
           <p className="text-[11px] font-bold text-[#0D9488] tracking-tight -mt-0.5">
-            2026 @Gimondo Domenico
+            2026@Gimondo Domenico
           </p>
         )}
       </div>
