@@ -293,12 +293,12 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       title: title.trim(),
       description: description.trim(),
       category,
-      creditsRequired: isFree ? 0 : Number(creditsRequired),
+      creditsRequired: isFree ? 0 : Number(valoreGentilezzaBriko),
       isFree,
       trackingType,
       actionRadiusKm,
       durationMinutes,
-      valoreGentilezzaBriko: Number(valoreGentilezzaBriko),
+      valoreGentilezzaBriko: isFree ? 0 : Number(valoreGentilezzaBriko),
       targetCommunityIds: targetCommunityIds.length > 0 ? targetCommunityIds : undefined,
       staticLocation: trackingType === 'static' ? {
         comune: staticComune.trim(),
@@ -658,6 +658,75 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             />
           </div>
 
+          {/* Valore Gentilezza BRIKO - REFINED TOGGLE & RANGE */}
+          <div className="bg-amber-50 border-2 border-amber-300 p-5 rounded-2xl space-y-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-black text-amber-950 uppercase tracking-widest">
+                  Valore della Gentilezza (BRIKO) *
+                </label>
+                <p className="text-[10px] text-amber-800 font-medium leading-tight">
+                  Definisci lo sforzo richiesto per questa azione.<br/>
+                  Il valore sarà effettivo solo se qualcuno accetta lo scambio.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2 bg-white px-4 py-2 rounded-xl border-2 border-amber-400 shadow-xs">
+                <span className="text-xl font-black text-amber-700">{isFree ? 0 : valoreGentilezzaBriko}</span>
+                <span className="text-base">🧱</span>
+              </div>
+            </div>
+
+            {/* Selection Mode Toggle */}
+            <div className="grid grid-cols-2 gap-2 p-1 bg-amber-200/50 rounded-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFree(true);
+                  setValoreGentilezzaBriko(0);
+                }}
+                className={`py-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                  isFree ? 'bg-white text-amber-950 shadow-sm' : 'text-amber-800 hover:bg-white/50'
+                }`}
+              >
+                PURO DONO (0)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFree(false);
+                  if (valoreGentilezzaBriko === 0) setValoreGentilezzaBriko(10);
+                }}
+                className={`py-2 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                  !isFree ? 'bg-amber-600 text-white shadow-sm' : 'text-amber-800 hover:bg-white/50'
+                }`}
+              >
+                VALORE SOCIALE (1-100)
+              </button>
+            </div>
+
+            {!isFree && (
+              <div className="space-y-3 pt-1">
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={valoreGentilezzaBriko}
+                  onChange={(e) => setValoreGentilezzaBriko(Number(e.target.value))}
+                  className="w-full h-3 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+                />
+                <div className="flex justify-between text-[10px] text-amber-900 font-black px-1">
+                  <span>1 BRIKO</span>
+                  <span className="opacity-50">50</span>
+                  <span>100 BRIKO (MAX)</span>
+                </div>
+                <div className="bg-white/60 p-2 rounded-xl text-[9px] text-amber-800 font-medium leading-relaxed italic border border-amber-200/50">
+                  "In GeoKind il valore non è prezzo, ma misura del tempo e della fatica che dedichiamo agli altri."
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Description */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
@@ -797,50 +866,6 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             </div>
           )}
 
-          {/* Free vs BRIKO */}
-          <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-slate-900">Gratuito (0 BRIKO - Dono Puro)</div>
-                <div className="text-[11px] text-slate-500">Nessun BRIKO richiesto, puro spirito di convivenza civile e vicinato</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={isFree}
-                onChange={(e) => {
-                  setIsFree(e.target.checked);
-                  if (e.target.checked) setCreditsRequired(0);
-                }}
-                className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
-              />
-            </div>
-
-            {!isFree && (
-              <div className="pt-2 border-t border-slate-200">
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Valore dell'aiuto in BRIKO (bricazioni):
-                </label>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={creditsRequired}
-                    onChange={(e) => setCreditsRequired(Number(e.target.value))}
-                    className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-amber-700"
-                  />
-                  <div className="text-xs text-amber-700 flex items-center space-x-1 font-extrabold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                    <span>🧱</span>
-                    <span>BRIKO</span>
-                  </div>
-                </div>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Chi accetterà questo aiuto dovrà disporre dei BRIKO indicati. Guadagnerai questi BRIKO a compimento della buone azione!
-                </p>
-              </div>
-            )}
-          </div>
-
           {/* Duration Selector */}
           <div className="space-y-2 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Durata di validità della Gentilezza</label>
@@ -868,40 +893,6 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                   {opt.label}
                 </button>
               ))}
-            </div>
-          </div>
-
-          {/* Valore Gentilezza BRIKO */}
-          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-xs font-bold text-amber-950 uppercase tracking-wider">
-                  Valore della Gentilezza (BRIKO)
-                </label>
-                <p className="text-[10px] text-amber-800">
-                  Definisci il valore di questa azione (da 0 a 100 BRIKO). Il valore sarà effettivo se accettato.
-                </p>
-              </div>
-              <div className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-lg border border-amber-300">
-                <span className="text-sm font-black text-amber-700">{valoreGentilezzaBriko}</span>
-                <span className="text-xs">🧱</span>
-              </div>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="5"
-              value={valoreGentilezzaBriko}
-              onChange={(e) => setValoreGentilezzaBriko(Number(e.target.value))}
-              className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
-            />
-            <div className="flex justify-between text-[10px] text-amber-800 font-bold">
-              <span>0 (Dono)</span>
-              <span>25</span>
-              <span>50</span>
-              <span>75</span>
-              <span>100 (Max)</span>
             </div>
           </div>
 

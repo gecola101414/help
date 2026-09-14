@@ -89,6 +89,7 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState('feed');
+  const [preSelectedCommunityId, setPreSelectedCommunityId] = useState<string | null>(null);
   const [distanceRadius, setDistanceRadius] = useState<number>(0); // 0 = Tutta Italia / Senza Limiti di raggio
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -802,7 +803,10 @@ export default function App() {
             onUpdateLocation={handleUpdateLocation}
             followedUserId={followedUserId}
             setFollowedUserId={setFollowedUserId}
-            onOpenCommunity={() => setActiveTab('community')}
+            onOpenCommunity={(comm) => {
+              setPreSelectedCommunityId(comm.id);
+              setActiveTab('community');
+            }}
             onOpenSponsor={() => setActiveTab('sponsors')}
           />
         )}
@@ -823,7 +827,9 @@ export default function App() {
             communities={communities}
             setCommunities={setCommunities}
             onSaveProfile={handleSaveProfile} 
-            initialSubTab="communities" 
+            initialSubTab="communities"
+            preSelectedCommunityId={preSelectedCommunityId}
+            onClearPreSelection={() => setPreSelectedCommunityId(null)}
           />
         )}
 
