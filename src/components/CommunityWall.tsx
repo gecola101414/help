@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Building2, Users, MessageSquare, Plus, Search, Sparkles, Trophy, 
   HeartHandshake, Mic, Send, Volume2, ShieldCheck, Check, MapPin, 
-  Store, UserPlus, LogOut, X, Loader2, Award, Play, Pause, AlertCircle, Clock
+  Store, UserPlus, LogOut, X, Loader2, Award, Play, Pause, AlertCircle, Clock,
+  ArrowLeft, Calendar, Info, Smile, Heart, ThumbsUp, Compass
 } from 'lucide-react';
-import { UserProfile, Community, CommunityMessage, AreaSponsor, SponsorInitiative, isCommunityExpired } from '../types';
+import { UserProfile, Community, CommunityMessage, CommunityInitiative, isCommunityExpired } from '../types';
 import { ComuneAutocompleteInput } from './ComuneAutocompleteInput';
 import { resolveAddressGeocode } from '../services/comuniService';
 import { db } from '../lib/firebase';
@@ -41,8 +42,23 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
   const setCommunities = setExternalCommunities || setLocalCommunities;
 
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
+
+  // Auto-select community if user is in exactly one community (makes it faster on mobile)
+  useEffect(() => {
+    if (user && user.communityIds && user.communityIds.length === 1 && !selectedCommunity && communities.length > 0) {
+      const commId = user.communityIds[0];
+      const comm = communities.find(c => c.id === commId);
+      if (comm) {
+        setSelectedCommunity(comm);
+      }
+    }
+  }, [user, communities, selectedCommunity]);
   const [searchCommunityQuery, setSearchCommunityQuery] = useState('');
   const [isCreateCommunityOpen, setIsCreateCommunityOpen] = useState(false);
+  const [isGenesisModalOpen, setIsGenesisModalOpen] = useState(false);
+  
+  // Hub Inner Tab state: 'chat' | 'initiatives' | 'members'
+  const [activeCommHubTab, setActiveCommHubTab] = useState<'chat' | 'initiatives' | 'members'>('chat');
   
   // Create Community Form
   const [newCommName, setNewCommName] = useState('');
@@ -60,6 +76,15 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
   const recordingTimerRef = useRef<any>(null);
   const [activeAudioMessageId, setActiveAudioMessageId] = useState<string | null>(null);
 
+  // Community Initiatives State
+  const [communityInitiatives, setCommunityInitiatives] = useState<CommunityInitiative[]>([]);
+  const [isCreateInitiativeOpen, setIsCreateInitiativeOpen] = useState(false);
+  const [newInitTitle, setNewInitTitle] = useState('');
+  const [newInitDesc, setNewInitDesc] = useState('');
+  const [newInitDate, setNewInitDate] = useState('');
+  const [newInitLoc, setNewInitLoc] = useState('');
+  const [isSubmittingInit, setIsSubmittingInit] = useState(false);
+
   // Initial demo communities if database is empty
   const defaultCommunities: Community[] = [
     {
@@ -75,6 +100,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
       memberCount: 3,
       brikoTreasury: 1250,
       createdAt: Date.now() - 86400000 * 5,
+      actionRadiusKm: 5,
     },
     {
       id: 'comm-milano-1',
@@ -89,6 +115,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
       memberCount: 2,
       brikoTreasury: 890,
       createdAt: Date.now() - 86400000 * 3,
+      actionRadiusKm: 8,
     }
   ];
 
@@ -117,7 +144,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
     };
   }, []);
 
-  // 3. Real-time Firestore listener for selected Community messages
+  // 2. Real-time Firestore listener for selected Community messages
   useEffect(() => {
     if (!selectedCommunity) return;
     let unsubscribe: (() => void) | undefined;
@@ -133,6 +160,28 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
       });
     } catch (err) {
       console.warn('Community chat listener error:', err);
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [selectedCommunity]);
+
+  // 3. Real-time Firestore listener for selected Community initiatives
+  useEffect(() => {
+    if (!selectedCommunity) return;
+    let unsubscribe: (() => void) | undefined;
+    try {
+      const initsRef = collection(db, 'help_communities', selectedCommunity.id, 'initiatives');
+      const q = query(initsRef, orderBy('createdAt', 'desc'));
+      unsubscribe = onSnapshot(q, (snap) => {
+        const fetched: CommunityInitiative[] = [];
+        snap.forEach((d) => {
+          fetched.push({ id: d.id, ...d.data() } as CommunityInitiative);
+        });
+        setCommunityInitiatives(fetched);
+      });
+    } catch (err) {
+      console.warn('Initiatives listener error:', err);
     }
     return () => {
       if (unsubscribe) unsubscribe();
@@ -172,17 +221,14 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
     }
   };
 
-  const handleSendTextMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputChatText.trim() || !selectedCommunity || !user) return;
-    const textToSend = inputChatText.trim();
-    setInputChatText('');
+  const handleSendTextMessage = async (textToSend: string) => {
+    if (!textToSend.trim() || !selectedCommunity || !user) return;
 
     const newMsg: Omit<CommunityMessage, 'id'> = {
       communityId: selectedCommunity.id,
       senderId: user.id,
       senderNickname: user.nickname,
-      text: textToSend,
+      text: textToSend.trim(),
       createdAt: Date.now(),
     };
 
@@ -191,6 +237,13 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
     } catch (e) {
       console.warn('Community text message add error:', e);
     }
+  };
+
+  const handleFormSendTextMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputChatText.trim()) return;
+    handleSendTextMessage(inputChatText);
+    setInputChatText('');
   };
 
   // Create Community Submit
@@ -249,6 +302,57 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
       console.error('Error creating community:', err);
     } finally {
       setIsCreatingComm(false);
+    }
+  };
+
+  // Create Initiative Submit
+  const handleCreateInitiativeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newInitTitle.trim() || !selectedCommunity || !user) return;
+
+    setIsSubmittingInit(true);
+    const initData: Omit<CommunityInitiative, 'id'> = {
+      communityId: selectedCommunity.id,
+      title: newInitTitle.trim(),
+      description: newInitDesc.trim() || 'Incontro locale o attività solidale per la comunità.',
+      organizerId: user.id,
+      organizerNickname: user.nickname,
+      dateStr: newInitDate.trim() || 'Data da concordare',
+      locationStr: newInitLoc.trim() || selectedCommunity.sedeAddress,
+      participants: [user.id],
+      createdAt: Date.now(),
+    };
+
+    try {
+      await addDoc(collection(db, 'help_communities', selectedCommunity.id, 'initiatives'), initData);
+      setIsCreateInitiativeOpen(false);
+      setNewInitTitle('');
+      setNewInitDesc('');
+      setNewInitDate('');
+      setNewInitLoc('');
+    } catch (err) {
+      console.warn('Initiative creation error:', err);
+    } finally {
+      setIsSubmittingInit(false);
+    }
+  };
+
+  // Join Initiative Handler
+  const handleJoinInitiative = async (init: CommunityInitiative) => {
+    if (!user || !selectedCommunity) return;
+    if (init.participants.includes(user.id)) return;
+
+    const updatedParticipants = [...init.participants, user.id];
+    setCommunityInitiatives((prev) =>
+      prev.map((i) => (i.id === init.id ? { ...i, participants: updatedParticipants } : i))
+    );
+
+    try {
+      await updateDoc(doc(db, 'help_communities', selectedCommunity.id, 'initiatives', init.id), {
+        participants: updatedParticipants,
+      });
+    } catch (err) {
+      console.warn('Join initiative error:', err);
     }
   };
 
@@ -348,114 +452,607 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-in fade-in duration-300">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6 animate-in fade-in duration-300">
       
-      {/* Hero Banner with BRIKO currency context */}
-      <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 rounded-3xl p-6 sm:p-10 text-white shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="max-w-3xl space-y-4 relative z-10">
-          <div className="inline-flex items-center space-x-2 bg-emerald-700/80 border border-emerald-400/40 px-3.5 py-1 rounded-full text-xs font-bold">
-            <span>🏛️ Comunità Civiche di Quartiere (BRIKO)</span>
-          </div>
-          <h1 className="text-3xl sm:text-5xl font-black tracking-tight font-sans">
-            Comunità Civiche & Mutuo Soccorso
-          </h1>
-          <p className="text-emerald-100 text-sm sm:text-base leading-relaxed">
-            Nel Sud e nella tradizione italiana la <em>bricazione (BRIKO)</em> rappresenta il valore di un aiuto o un debito di gratitudine. 
-            Ogni comunità ospita fino a <strong>massimo 100 membri</strong> per garantire vero spirito di vicinato, con bacheca comune e chat con messaggi vocali.
-          </p>
-          <div className="pt-2 flex flex-wrap gap-3">
+      {/* 🟢 IF A COMMUNITY IS SELECTED -> FULL DEDICATED COMMUNITY ROOM HUB ("Vivere la Comunità") */}
+      {selectedCommunity ? (
+        <div className="space-y-6 animate-in zoom-in-95 duration-200">
+          
+          {/* Top Hub Navigation Bar */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-3 shadow-xs flex items-center justify-between flex-wrap gap-2">
             <button
-              onClick={() => setIsCreateCommunityOpen(true)}
-              className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-5 py-2.5 rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center space-x-2 cursor-pointer"
+              onClick={() => setSelectedCommunity(null)}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center gap-2 cursor-pointer"
             >
-              <Building2 className="w-4 h-4" />
-              <span>+ Fonda una Nuova Comunità Civica</span>
+              <ArrowLeft className="w-4 h-4 text-emerald-700" />
+              <span>← Torna a tutte le Comunità Civiche</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <span className="bg-emerald-100 text-emerald-900 font-extrabold text-xs px-3 py-1 rounded-full uppercase">
+                🏛️ {selectedCommunity.comune}
+              </span>
+              <button
+                onClick={() => setIsGenesisModalOpen(true)}
+                className="bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-900 font-bold px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer transition-all"
+              >
+                <Info className="w-4 h-4 text-emerald-600" />
+                <span>Genesi di GeoKind & BRIKO</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Warm Cozy Hero Welcome Banner */}
+          <div className="bg-gradient-to-r from-emerald-900 via-teal-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden border border-emerald-700/40">
+            <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-72 h-72 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <div className="space-y-4 relative z-10">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="inline-flex items-center space-x-2 bg-emerald-800/90 border border-emerald-400/30 px-3.5 py-1 rounded-full text-xs font-bold text-emerald-200">
+                  <Building2 className="w-4 h-4 text-emerald-400" />
+                  <span>Ambiente di Comunità Civica a Km 0</span>
+                </div>
+
+                {/* Trial or Official Status Badge */}
+                {((selectedCommunity.memberCount || 0) >= 10) ? (
+                  <span className="bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+                    ✅ Comunità Ufficiale Permanente
+                  </span>
+                ) : (
+                  <span className="bg-amber-500/20 border border-amber-400/40 text-amber-200 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+                    ⏳ Prova 1 Mese: {Math.max(0, Math.ceil((30 * 24 * 3600 * 1000 - (Date.now() - (selectedCommunity.createdAt || Date.now()))) / (24 * 3600 * 1000)))} giorni rimasti per 10 membri ({selectedCommunity.memberCount}/10)
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
+                  {selectedCommunity.name}
+                </h1>
+                <p className="text-emerald-100 text-xs sm:text-sm font-medium flex items-center gap-1.5 opacity-90">
+                  <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Sede Ufficiale: <strong>{selectedCommunity.sedeAddress}</strong> ({selectedCommunity.comune})</span>
+                </p>
+              </div>
+
+              <p className="text-emerald-100 text-xs sm:text-sm leading-relaxed max-w-3xl bg-emerald-950/60 p-3.5 rounded-2xl border border-emerald-800/50">
+                "{selectedCommunity.description}"
+              </p>
+
+              {/* Badges & Prominent Join/Leave Action Bar */}
+              <div className="pt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t border-emerald-800/80">
+                <div className="flex flex-wrap items-center gap-2.5 text-xs font-bold">
+                  <span className="bg-emerald-800/80 px-3 py-1.5 rounded-xl border border-emerald-600 flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-emerald-300" />
+                    <span>{selectedCommunity.memberCount} / 100 Membri</span>
+                  </span>
+                  
+                  <span className="bg-amber-500/20 text-amber-200 border border-amber-400/30 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                    <span>🧱 Tesoreria:</span>
+                    <strong className="text-amber-300 font-extrabold">{selectedCommunity.brikoTreasury || 500} BRIKO</strong>
+                  </span>
+
+                  {selectedCommunity.actionRadiusKm && (
+                    <span className="bg-emerald-900/60 text-emerald-200 border border-emerald-700 px-3 py-1.5 rounded-xl flex items-center gap-1">
+                      <Compass className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Raggio {selectedCommunity.actionRadiusKm} km</span>
+                    </span>
+                  )}
+                </div>
+
+                {/* ENTRIES & JOINING CONDITIONS BUTTON */}
+                {user && selectedCommunity.members.includes(user.id) ? (
+                  <div className="flex items-center gap-2">
+                    <span className="bg-emerald-500 text-slate-950 text-xs font-black px-3 py-2 rounded-xl flex items-center gap-1 shadow-xs">
+                      <Check className="w-4 h-4" /> Sei Membro Attivo
+                    </span>
+                    <button
+                      onClick={() => handleLeaveCommunity(selectedCommunity)}
+                      className="bg-red-500/80 hover:bg-red-600 text-white font-bold px-3 py-2 rounded-xl text-xs transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                      title="Lascia questa comunità civica"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Esci</span>
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleJoinCommunity(selectedCommunity)}
+                    disabled={selectedCommunity.memberCount >= 100}
+                    className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs sm:text-sm transition-all flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 disabled:opacity-50"
+                  >
+                    <UserPlus className="w-5 h-5" />
+                    <span>✨ ENTRA E VIVI QUESTA COMUNITÀ (Unisciti ora in 1 click)</span>
+                  </button>
+                )}
+              </div>
+
+            </div>
+          </div>
+
+          {/* INNER ROOM TABS NAVIGATION - Vertical stack on mobile */}
+          <div className="flex flex-col sm:flex-row border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs gap-1.5">
+            <button
+              onClick={() => setActiveCommHubTab('chat')}
+              className={`w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                activeCommHubTab === 'chat'
+                  ? 'bg-emerald-800 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span>💬 Chat Civica & Vocali</span>
+            </button>
+
+            <button
+              onClick={() => setActiveCommHubTab('initiatives')}
+              className={`w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                activeCommHubTab === 'initiatives'
+                  ? 'bg-emerald-800 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Award className="w-4 h-4" />
+              <span>🎖️ Iniziative & Eventi ({communityInitiatives.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveCommHubTab('members')}
+              className={`w-full sm:flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                activeCommHubTab === 'members'
+                  ? 'bg-emerald-800 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span>👥 Membri & Tesoreria ({selectedCommunity.memberCount})</span>
             </button>
           </div>
+
+          {/* TAB 1: LIVE COMMUNITY CHAT */}
+          {activeCommHubTab === 'chat' && (
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-emerald-600" />
+                    <span>Chat di Gruppo & Vocali del Vicinato</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Spazio di dialogo aperto tra i membri della comunità di {selectedCommunity.comune}
+                  </p>
+                </div>
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                  {chatMessages.length} messaggi inviati
+                </span>
+              </div>
+
+              {/* Chat Stream */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 h-96 overflow-y-auto space-y-3">
+                {chatMessages.length === 0 ? (
+                  <div className="text-center py-16 text-slate-400 text-xs space-y-3">
+                    <HeartHandshake className="w-10 h-10 mx-auto opacity-40 text-emerald-600 animate-pulse" />
+                    <p className="font-bold text-slate-700 text-sm">Nessun messaggio ancora presente.</p>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      Rompi il ghiaccio! Saluta i vicini di casa, offri una tazza di caffè o fai una domanda alla comunità.
+                    </p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg) => {
+                    const isMine = user ? msg.senderId === user.id : false;
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
+                      >
+                        <div className="text-[10px] text-slate-500 font-bold mb-1 px-1 flex items-center gap-1">
+                          <span>{msg.senderNickname}</span>
+                          <span>•</span>
+                          <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+
+                        <div
+                          className={`max-w-[85%] sm:max-w-[75%] rounded-2xl px-4 py-2.5 text-xs font-medium space-y-1 shadow-2xs ${
+                            isMine
+                              ? 'bg-emerald-800 text-white rounded-br-none'
+                              : 'bg-white text-slate-900 border border-slate-200 rounded-bl-none'
+                          }`}
+                        >
+                          <div className="leading-relaxed">{msg.text}</div>
+
+                          {/* Audio Player if audioUrl exists */}
+                          {msg.audioUrl && (
+                            <div className={`pt-2 border-t mt-1.5 flex items-center space-x-2 ${
+                              isMine ? 'border-emerald-700' : 'border-slate-100'
+                            }`}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (activeAudioMessageId === msg.id) {
+                                    setActiveAudioMessageId(null);
+                                  } else {
+                                    setActiveAudioMessageId(msg.id);
+                                    const audio = new Audio(msg.audioUrl);
+                                    audio.play();
+                                    audio.onended = () => setActiveAudioMessageId(null);
+                                  }
+                                }}
+                                className={`p-2 rounded-full flex items-center justify-center transition-transform active:scale-90 cursor-pointer ${
+                                  isMine ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                }`}
+                              >
+                                {activeAudioMessageId === msg.id ? (
+                                  <Pause className="w-4 h-4" />
+                                ) : (
+                                  <Play className="w-4 h-4 ml-0.5" />
+                                )}
+                              </button>
+                              <div className="flex-1 space-y-0.5">
+                                <div className="text-[10px] font-bold">
+                                  Vocale Wappino ({msg.audioDuration || 3}s)
+                                </div>
+                                <div className={`h-1.5 rounded-full overflow-hidden ${isMine ? 'bg-emerald-950' : 'bg-slate-200'}`}>
+                                  <div
+                                    className={`h-full ${isMine ? 'bg-amber-300' : 'bg-emerald-600'} ${
+                                      activeAudioMessageId === msg.id ? 'w-full transition-all duration-3000' : 'w-1/3'
+                                    }`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Quick Emojis Bar */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider shrink-0">Reazioni Rapide:</span>
+                {[
+                  '👋 Ciao vicini!', 
+                  '☕ Offro un caffè!', 
+                  '🛒 Spesa a chi serve?', 
+                  '🚲 Prestito bicicletta', 
+                  '🧱 W i BRIKO'
+                ].map((quickText) => (
+                  <button
+                    key={quickText}
+                    type="button"
+                    onClick={() => handleSendTextMessage(quickText)}
+                    disabled={!user || !selectedCommunity.members.includes(user.id)}
+                    className="bg-slate-100 hover:bg-emerald-100 hover:text-emerald-900 text-slate-700 border border-slate-200 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer disabled:opacity-40"
+                  >
+                    {quickText}
+                  </button>
+                ))}
+              </div>
+
+              {/* Chat Form / Voice Recorder */}
+              {user && selectedCommunity.members.includes(user.id) ? (
+                isRecordingVoice ? (
+                  <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-3 flex items-center justify-between animate-pulse">
+                    <div className="flex items-center space-x-3 text-red-900 text-xs font-bold">
+                      <Mic className="w-5 h-5 text-red-600 animate-bounce" />
+                      <span>Registrazione Vocale in corso... ({recordingSeconds} sec)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleStopRecordingAndSend}
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all shadow-md cursor-pointer"
+                    >
+                      Invia Vocale 🎤
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleFormSendTextMessage} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={inputChatText}
+                      onChange={(e) => setInputChatText(e.target.value)}
+                      placeholder="Scrivi un messaggio per i membri della comunità..."
+                      className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-xs"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={handleStartRecording}
+                      className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-3.5 py-3 rounded-xl text-xs transition-all cursor-pointer flex items-center space-x-1 shadow-md shrink-0 active:scale-95"
+                      title="Registra ed invia un messaggio vocale alla comunità"
+                    >
+                      <Mic className="w-4 h-4 text-emerald-200 animate-pulse" />
+                      <span className="hidden sm:inline">Vocale 🎤</span>
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={!inputChatText.trim()}
+                      className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white px-5 py-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 shrink-0 shadow-md"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Invia</span>
+                    </button>
+                  </form>
+                )
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-center space-y-2">
+                  <p className="text-xs font-bold text-amber-950">
+                    👋 Non sei ancora iscritto a questa comunità civica.
+                  </p>
+                  <p className="text-[11px] text-amber-900">
+                    Clicca su <strong>"ENTRA E VIVI QUESTA COMUNITÀ"</strong> in alto per accedere alla chat e partecipare a tutte le attività!
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: INIZIATIVE & EVENTI */}
+          {activeCommHubTab === 'initiatives' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm">
+                <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                      <Award className="w-5 h-5 text-emerald-600" />
+                      <span>Iniziative & Eventi di Comunità</span>
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Attività di quartiere, banchi d'aiuto e momenti di incontro organizzati dai membri
+                    </p>
+                  </div>
+
+                  {user && selectedCommunity.members.includes(user.id) && (
+                    <button
+                      onClick={() => setIsCreateInitiativeOpen(true)}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 cursor-pointer shadow-md transition-all"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ Proponi Nuova Iniziativa</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* List of Initiatives */}
+                {communityInitiatives.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400 text-xs space-y-2 bg-slate-50 rounded-2xl p-6">
+                    <Calendar className="w-10 h-10 mx-auto opacity-40 text-emerald-600" />
+                    <p className="font-bold text-slate-700">Nessuna iniziativa attiva in questa comunità.</p>
+                    <p className="text-[11px] text-slate-500">
+                      Proponi un momento di incontro, una giornata di pulizia del quartiere o uno scambio attrezzi!
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {communityInitiatives.map((init) => {
+                      const isJoined = user ? init.participants.includes(user.id) : false;
+                      return (
+                        <div key={init.id} className="bg-slate-50 rounded-2xl p-5 border border-slate-200 space-y-3 hover:shadow-md transition-all">
+                          <div className="flex items-start justify-between">
+                            <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase">
+                              Iniziativa Locale
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-medium">
+                              Organizzata da <strong>{init.organizerNickname}</strong>
+                            </span>
+                          </div>
+
+                          <h4 className="text-sm font-black text-slate-900 leading-snug">
+                            {init.title}
+                          </h4>
+
+                          <p className="text-xs text-slate-600 leading-relaxed">
+                            {init.description}
+                          </p>
+
+                          <div className="text-xs space-y-1 text-slate-500 pt-2 border-t border-slate-200/60 font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>{init.dateStr}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>{init.locationStr}</span>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                              <Users className="w-3.5 h-3.5 text-slate-500" />
+                              <span>{init.participants.length} Partecipanti</span>
+                            </span>
+
+                            {user && selectedCommunity.members.includes(user.id) && (
+                              <button
+                                onClick={() => handleJoinInitiative(init)}
+                                disabled={isJoined}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                                  isJoined
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs'
+                                }`}
+                              >
+                                {isJoined ? '✓ Partecipo' : 'Unisciti All\'Iniziativa'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: MEMBRI & TESORERIA */}
+          {activeCommHubTab === 'members' && (
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-6 shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-emerald-600" />
+                    <span>Membri Iscritti & Fondo Tesoreria BRIKO</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Elenco dei cittadini aderenti a questa comunità (Massimo 100 membri consentiti)
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-black text-amber-600">
+                    🧱 {selectedCommunity.brikoTreasury || 500} BRIKO
+                  </div>
+                  <div className="text-[10px] text-slate-400">Tesoreria di Comunità</div>
+                </div>
+              </div>
+
+              {/* Members Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {(selectedCommunity.memberNicknames || ['MarcoSolidale', 'ElenaVicina']).map((nick, idx) => {
+                  const isFounder = nick === selectedCommunity.founderNickname;
+                  return (
+                    <div key={idx} className="bg-slate-50 rounded-2xl p-3 border border-slate-200 flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-full bg-emerald-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                        {nick.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-slate-900 truncate">{nick}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {isFounder ? '⭐ Fondatore' : 'Membro Civico'}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Treasury Explainer Box */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-xs text-emerald-950 space-y-2">
+                <div className="font-extrabold text-sm text-emerald-900 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <span>Come funziona la Tesoreria BRIKO della Comunità?</span>
+                </div>
+                <p className="leading-relaxed">
+                  Ogni nuova comunità nasce con un fondo iniziale omaggio di <strong>500 BRIKO</strong> messi a disposizione dal sistema. 
+                  Gli Sponsor Locali e le Attività commerciali possono effettuare donazioni alla tesoreria per finanziare iniziative solidali di quartiere!
+                </p>
+              </div>
+            </div>
+          )}
+
         </div>
-      </div>
-
-      {/* Main Sub-tabs */}
-      <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs overflow-x-auto">
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('communities')}
-          className={`flex-1 min-w-[150px] py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
-            activeSubTab === 'communities'
-              ? 'bg-emerald-700 text-white shadow-md'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Comunità Civiche ({communities.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('stories')}
-          className={`flex-1 min-w-[150px] py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
-            activeSubTab === 'stories'
-              ? 'bg-teal-700 text-white shadow-md'
-              : 'text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <Trophy className="w-4 h-4" />
-          <span>Storie & Classifica BRIKO</span>
-        </button>
-      </div>
-
-      {/* SUB-TAB 1: COMMUNITIES */}
-      {activeSubTab === 'communities' && (
+      ) : (
+        /* 🔵 IF NO COMMUNITY IS SELECTED -> DIRECTORY OF ALL COMMUNITIES */
         <div className="space-y-6">
           
-          {/* Rules Banner for Communities */}
-          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-            <div className="space-y-1">
-              <div className="font-extrabold text-sm text-emerald-900 flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-emerald-600" />
-                <span>Regolamento Comunità Civiche GEOKIND:</span>
+          {/* Main Directory Hero Banner */}
+          <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 rounded-3xl p-6 sm:p-10 text-white shadow-xl relative overflow-hidden">
+            <div className="absolute right-0 top-0 translate-x-10 -translate-y-10 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+            <div className="max-w-3xl space-y-4 relative z-10">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="bg-emerald-700/80 border border-emerald-400/40 px-3.5 py-1 rounded-full text-xs font-bold text-emerald-100">
+                  🏛️ Comunità Civiche di Quartiere (BRIKO)
+                </span>
+                <button
+                  onClick={() => setIsGenesisModalOpen(true)}
+                  className="bg-amber-400/20 hover:bg-amber-400/30 border border-amber-300/40 text-amber-200 font-bold px-3 py-1 rounded-full text-xs transition-all cursor-pointer flex items-center gap-1"
+                >
+                  <Info className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Genesi di GeoKind & Storia dei BRIKO</span>
+                </button>
               </div>
-              <p className="text-emerald-800 leading-relaxed">
-                • <strong>Capacità massima: 100 membri</strong> per comunità per preservare lo spirito di vicinato.<br />
-                • <strong>Ingresso Libero e Garantito:</strong> nessuno può rifiutare l'entrata di un nuovo cittadino.<br />
-                • Ogni comunità dispone di una <strong>Chat di Gruppo dedicata con Messaggi e Vocali</strong> e una tesoreria in BRIKO!
+
+              <h1 className="text-3xl sm:text-5xl font-black tracking-tight font-sans">
+                Comunità Civiche & Mutuo Soccorso
+              </h1>
+              <p className="text-emerald-100 text-sm sm:text-base leading-relaxed">
+                Gli spazi caldi di quartiere per aiutarsi tra vicini di casa. Seleziona una comunità o entravi per usufruire della chat di gruppo, vocali ed eventi locali!
               </p>
+              
+              <div className="pt-2 flex flex-wrap gap-3">
+                <button
+                  onClick={() => setIsCreateCommunityOpen(true)}
+                  className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black px-6 py-3 rounded-2xl text-xs sm:text-sm transition-all shadow-lg flex items-center space-x-2 cursor-pointer active:scale-95"
+                >
+                  <Building2 className="w-4.5 h-4.5" />
+                  <span>+ Fonda una Nuova Comunità Civica</span>
+                </button>
+              </div>
             </div>
+          </div>
+
+          {/* Directory Sub-tabs */}
+          <div className="flex border-b border-slate-200 bg-white rounded-2xl p-1.5 shadow-xs overflow-x-auto">
             <button
-              onClick={() => setIsCreateCommunityOpen(true)}
-              className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all shrink-0 cursor-pointer shadow-xs"
+              type="button"
+              onClick={() => setActiveSubTab('communities')}
+              className={`flex-1 min-w-[150px] py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                activeSubTab === 'communities'
+                  ? 'bg-emerald-800 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
             >
-              + Fondane una Tu
+              <Building2 className="w-4 h-4" />
+              <span>Elenco Comunità Civiche ({communities.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('stories')}
+              className={`flex-1 min-w-[150px] py-3 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-2 cursor-pointer ${
+                activeSubTab === 'stories'
+                  ? 'bg-teal-800 text-white shadow-md'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Trophy className="w-4 h-4" />
+              <span>Storie & Classifica BRIKO</span>
             </button>
           </div>
 
-          {/* Search bar for communities */}
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              value={searchCommunityQuery}
-              onChange={(e) => setSearchCommunityQuery(e.target.value)}
-              placeholder="Cerca comunità per nome, sede o comune (es. Somma Lombardo, Milano...)"
-              className="w-full pl-10 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-xs"
-            />
-          </div>
+          {activeSubTab === 'communities' && (
+            <div className="space-y-6">
+              
+              {/* Rules Banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="space-y-1">
+                  <div className="font-extrabold text-sm text-emerald-900 flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-emerald-600" />
+                    <span>Condizioni d'Ingresso & Trasparenza GEOKIND:</span>
+                  </div>
+                  <p className="text-emerald-800 leading-relaxed">
+                    • <strong>Capacità massima: 100 membri</strong> per comunità per preservare lo spirito di vicinato reale.<br />
+                    • <strong>Ingresso Garantito:</strong> Nessuno può rifiutare l'ingresso di un nuovo membro finché c'è posto.<br />
+                    • Clicca su qualsiasi comunità per <strong>entrare nell'ambiente dedicato con Chat, Vocali e Iniziative!</strong>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setIsCreateCommunityOpen(true)}
+                  className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition-all shrink-0 cursor-pointer shadow-xs"
+                >
+                  + Fondane una Tu
+                </button>
+              </div>
 
-          {/* List of Communities & Active Community View */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            {/* Left Col: Community Cards */}
-            <div className="lg:col-span-1 space-y-4">
-              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <Building2 className="w-4 h-4 text-emerald-600" />
-                <span>Comunità Disponibili ({filteredCommunities.length})</span>
-              </h3>
+              {/* Search bar */}
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchCommunityQuery}
+                  onChange={(e) => setSearchCommunityQuery(e.target.value)}
+                  placeholder="Cerca comunità per nome, sede o comune (es. Somma Lombardo, Milano...)"
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-xs sm:text-sm font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-xs"
+                />
+              </div>
 
-              <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
+              {/* Communities Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredCommunities.map((comm) => {
                   const isMember = user ? comm.members?.includes(user.id) : false;
-                  const isSelected = selectedCommunity?.id === comm.id;
                   
                   const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
                   const age = Date.now() - (comm.createdAt || Date.now());
@@ -465,383 +1062,172 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                   return (
                     <div
                       key={comm.id}
-                      onClick={() => setSelectedCommunity(comm)}
-                      className={`p-5 rounded-2xl border transition-all cursor-pointer space-y-3 relative overflow-hidden ${
-                        isSelected
-                          ? 'bg-emerald-900 text-white border-emerald-700 shadow-lg ring-2 ring-emerald-500'
-                          : 'bg-white hover:bg-slate-50 border-slate-200 shadow-xs'
-                      }`}
+                      className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between group"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${
-                            isSelected ? 'bg-emerald-700 text-emerald-100' : 'bg-emerald-100 text-emerald-800'
-                          }`}>
-                            {comm.comune}
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="bg-emerald-100 text-emerald-900 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase">
+                            🏛️ {comm.comune}
                           </span>
-                          <h4 className={`text-base font-extrabold mt-1.5 leading-snug ${
-                            isSelected ? 'text-white' : 'text-slate-900'
-                          }`}>
-                            {comm.name}
-                          </h4>
+                          {isMember && (
+                            <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 shadow-xs">
+                              Membro ✓
+                            </span>
+                          )}
                         </div>
-                        {isMember && (
-                          <span className="bg-amber-400 text-slate-950 text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 shadow-xs">
-                            Membro ✓
+
+                        <h3 className="text-lg font-black text-slate-900 group-hover:text-emerald-800 transition-colors leading-snug">
+                          {comm.name}
+                        </h3>
+
+                        {/* 30-Day trial status banner */}
+                        <div className={`text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 ${
+                          isOfficial
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                        }`}>
+                          {isOfficial ? (
+                            <><span>✅</span> <span>Comunità Ufficiale Permanente</span></>
+                          ) : (
+                            <><span>⏳</span> <span>Prova 1 Mese: {daysLeft} gg rimasti per 10 membri ({comm.memberCount}/10)</span></>
+                          )}
+                        </div>
+
+                        <div className="text-xs text-slate-600 space-y-1">
+                          <div className="flex items-center gap-1.5 font-medium text-slate-800">
+                            <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span className="truncate">{comm.sedeAddress}</span>
+                          </div>
+                          <p className="line-clamp-2 text-[11px] leading-relaxed pt-1 text-slate-500">
+                            {comm.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-4 border-t border-slate-100 space-y-3">
+                        <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+                          <span className="flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5 text-slate-500" />
+                            <span>{comm.memberCount} / 100 Membri</span>
                           </span>
-                        )}
-                      </div>
-
-                      {/* 30-Day trial status banner */}
-                      <div className={`text-[10px] font-bold px-2.5 py-1 rounded-lg flex items-center gap-1 ${
-                        isOfficial
-                          ? (isSelected ? 'bg-emerald-800 text-emerald-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200')
-                          : (isSelected ? 'bg-amber-900/60 text-amber-200 border border-amber-500/40' : 'bg-amber-50 text-amber-800 border border-amber-200')
-                      }`}>
-                        {isOfficial ? (
-                          <><span>✅</span> <span>Comunità Ufficiale Permanente</span></>
-                        ) : (
-                          <><span>⏳</span> <span>Prova 1 mese: {daysLeft} gg rimasti per 10 membri ({comm.memberCount}/10)</span></>
-                        )}
-                      </div>
-
-                      <div className={`text-xs space-y-1 ${isSelected ? 'text-emerald-100' : 'text-slate-600'}`}>
-                        <div className="flex items-center gap-1.5 font-medium">
-                          <MapPin className="w-3.5 h-3.5 shrink-0" />
-                          <span className="truncate">{comm.sedeAddress}</span>
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <span>🧱</span>
+                            <span>{comm.brikoTreasury || 500} BRIKO</span>
+                          </span>
                         </div>
-                        <p className="line-clamp-2 text-[11px] leading-relaxed pt-1 opacity-90">
-                          {comm.description}
-                        </p>
-                      </div>
 
-                      <div className={`pt-3 border-t flex items-center justify-between text-xs font-bold ${
-                        isSelected ? 'border-emerald-800 text-emerald-200' : 'border-slate-100 text-slate-600'
-                      }`}>
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5" />
-                          <span>{comm.memberCount} / 100 membri</span>
-                        </span>
-                        <span className="flex items-center gap-1 text-amber-500">
-                          <span>🧱</span>
-                          <span>{comm.brikoTreasury || 500} BRIKO</span>
-                        </span>
+                        <button
+                          onClick={() => {
+                            setSelectedCommunity(comm);
+                            setActiveCommHubTab('chat');
+                          }}
+                          className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3 rounded-2xl text-xs transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                        >
+                          <Building2 className="w-4 h-4 text-amber-300" />
+                          <span>Vivi e Entra in Comunità →</span>
+                        </button>
                       </div>
                     </div>
                   );
                 })}
               </div>
+
             </div>
+          )}
 
-            {/* Right Col: Community Details & Live Chat */}
-            <div className="lg:col-span-2">
-              {selectedCommunity ? (
-                <div className="bg-white rounded-3xl border border-slate-200 shadow-md p-6 space-y-6">
-                  
-                  {/* Community Header */}
-                  <div className="bg-gradient-to-r from-emerald-800 to-teal-800 text-white rounded-2xl p-6 space-y-3 shadow-sm">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="bg-emerald-600/80 border border-emerald-400/40 text-emerald-100 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
-                        {selectedCommunity.comune}
-                      </span>
-                      <span className="text-xs text-emerald-200">
-                        Fondatore: <strong>{selectedCommunity.founderNickname}</strong>
-                      </span>
-                    </div>
+          {/* Stories Sub-tab */}
+          {activeSubTab === 'stories' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-4">
+                <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                  <Sparkles className="w-5 h-5 text-emerald-600" />
+                  <span>Storie di Solidarietà Recente</span>
+                </h2>
 
-                    <h2 className="text-2xl font-black">{selectedCommunity.name}</h2>
-                    
-                    <div className="flex items-center gap-2 text-xs text-emerald-100 bg-emerald-900/50 p-2.5 rounded-xl border border-emerald-700/50">
-                      <MapPin className="w-4 h-4 text-emerald-300 shrink-0" />
-                      <span><strong>Sede Ufficiale:</strong> {selectedCommunity.sedeAddress}</span>
-                    </div>
-
-                    <p className="text-xs text-emerald-100 leading-relaxed pt-1">
-                      {selectedCommunity.description}
-                    </p>
-
-                    {/* Member status & Actions */}
-                    <div className="pt-3 border-t border-emerald-700/60 flex items-center justify-between flex-wrap gap-3">
-                      <div className="flex items-center gap-3 text-xs font-bold">
-                        <span className="bg-emerald-900/80 px-3 py-1.5 rounded-lg border border-emerald-600 flex items-center gap-1.5">
-                          <Users className="w-4 h-4 text-emerald-300" />
-                          <span>Capacità: {selectedCommunity.memberCount} / 100 Membri</span>
-                        </span>
-                        <span className="bg-amber-500/20 text-amber-200 border border-amber-400/30 px-3 py-1.5 rounded-lg flex items-center gap-1">
-                          <span>🧱 Tesoreria:</span>
-                          <strong className="text-amber-300">{selectedCommunity.brikoTreasury || 500} BRIKO</strong>
-                        </span>
+                <div className="space-y-4">
+                  {[
+                    {
+                      id: '1',
+                      title: 'Spesa e medicinali consegnati a Somma Lombardo',
+                      content: 'Grazie ai 100 BRIKO ricevuti ed al supporto di Marco, la signora Anna ha ricevuto la spesa direttamente a casa. La bricazione della gentilezza rende la nostra comunità più unita!',
+                      helper: 'MarcoSolidale',
+                      recipient: 'Signora Anna',
+                      date: 'Oggi',
+                    },
+                    {
+                      id: '2',
+                      title: 'Riparazione bicicletta in cortile',
+                      content: 'Un guasto al cambio della bici risolto in 15 minuti grazie agli attrezzi condivisi da Giuseppe in cambio di 10 BRIKO simbolici.',
+                      helper: 'Giuseppe_Mi',
+                      recipient: 'Davide',
+                      date: 'Ieri',
+                    },
+                  ].map((story) => (
+                    <div key={story.id} className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow space-y-3">
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">Storie dal Vicinato</span>
+                        <span>{story.date}</span>
                       </div>
-
-                      {user && selectedCommunity.members.includes(user.id) ? (
-                        <button
-                          onClick={() => handleLeaveCommunity(selectedCommunity)}
-                          className="bg-red-500/80 hover:bg-red-600 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <LogOut className="w-3.5 h-3.5" />
-                          <span>Esci dalla Comunità</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleJoinCommunity(selectedCommunity)}
-                          disabled={selectedCommunity.memberCount >= 100}
-                          className="bg-amber-400 hover:bg-amber-500 text-slate-950 font-black px-5 py-2.5 rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 disabled:opacity-50"
-                        >
-                          <UserPlus className="w-4 h-4" />
-                          <span>Unisciti alla Comunità (Aperto a tutti)</span>
-                        </button>
-                      )}
+                      <h3 className="text-base font-bold text-slate-900">{story.title}</h3>
+                      <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">{story.content}</p>
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                        <div>Aiutante: <strong className="text-slate-800">{story.helper}</strong></div>
+                        <div>Ricevente: <strong className="text-slate-800">{story.recipient}</strong></div>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Leaderboard */}
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                      <Trophy className="w-5 h-5 text-amber-500" />
+                      <span>Classifica Cittadini BRIKO</span>
+                    </h3>
+                    <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">Top Quartiere</span>
                   </div>
 
-                  {/* Community Chat Section */}
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                        <MessageSquare className="w-5 h-5 text-emerald-600" />
-                        <span>Chat di Comunità (Gruppo Incontro)</span>
-                      </h3>
-                      <span className="text-xs text-slate-500">
-                        {chatMessages.length} messaggi
-                      </span>
-                    </div>
-
-                    {/* Chat messages stream */}
-                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 h-80 overflow-y-auto space-y-3">
-                      {chatMessages.length === 0 ? (
-                        <div className="text-center py-12 text-slate-400 text-xs space-y-2">
-                          <MessageSquare className="w-8 h-8 mx-auto opacity-40 text-emerald-600" />
-                          <p className="font-semibold text-slate-600">Nessun messaggio ancora inviato in questa comunità.</p>
-                          <p className="text-[11px]">Invia il primo messaggio o registra un vocale per salutare i tuoi vicini!</p>
+                  <div className="space-y-3">
+                    {[
+                      { rank: 1, nickname: 'MarcoSolidale', helped: 24, briko: 450, rating: 5.0 },
+                      { rank: 2, nickname: 'ElenaVicina', helped: 19, briko: 380, rating: 4.9 },
+                      { rank: 3, nickname: 'Giuseppe_Mi', helped: 15, briko: 300, rating: 4.8 },
+                    ].map((item) => (
+                      <div key={item.rank} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
+                            item.rank === 1 ? 'bg-amber-400 text-white' : 'bg-slate-300 text-slate-800'
+                          }`}>
+                            {item.rank}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-slate-800">{item.nickname}</div>
+                            <div className="text-[10px] text-slate-500">{item.helped} aiuti completati</div>
+                          </div>
                         </div>
-                      ) : (
-                        chatMessages.map((msg) => {
-                          const isMine = user ? msg.senderId === user.id : false;
-
-                          return (
-                            <div
-                              key={msg.id}
-                              className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
-                            >
-                              <div className="text-[10px] text-slate-500 font-bold mb-1 px-1">
-                                {msg.senderNickname} • {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </div>
-
-                              <div
-                                className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-xs font-medium space-y-1 shadow-2xs ${
-                                  isMine
-                                    ? 'bg-emerald-700 text-white rounded-br-none'
-                                    : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'
-                                }`}
-                              >
-                                <div>{msg.text}</div>
-
-                                {/* Audio Player if audioUrl exists */}
-                                {msg.audioUrl && (
-                                  <div className={`pt-2 border-t mt-1.5 flex items-center space-x-2 ${
-                                    isMine ? 'border-emerald-600' : 'border-slate-100'
-                                  }`}>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (activeAudioMessageId === msg.id) {
-                                          setActiveAudioMessageId(null);
-                                        } else {
-                                          setActiveAudioMessageId(msg.id);
-                                          const audio = new Audio(msg.audioUrl);
-                                          audio.play();
-                                          audio.onended = () => setActiveAudioMessageId(null);
-                                        }
-                                      }}
-                                      className={`p-1.5 rounded-full flex items-center justify-center transition-transform active:scale-90 cursor-pointer ${
-                                        isMine ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                                      }`}
-                                    >
-                                      {activeAudioMessageId === msg.id ? (
-                                        <Pause className="w-3.5 h-3.5" />
-                                      ) : (
-                                        <Play className="w-3.5 h-3.5 ml-0.5" />
-                                      )}
-                                    </button>
-                                    <div className="flex-1 space-y-0.5">
-                                      <div className="text-[10px] font-bold">
-                                        Vocale Wappino Interno ({msg.audioDuration || 3}s)
-                                      </div>
-                                      <div className={`h-1 rounded-full overflow-hidden ${isMine ? 'bg-emerald-800' : 'bg-slate-200'}`}>
-                                        <div
-                                          className={`h-full ${isMine ? 'bg-amber-300' : 'bg-emerald-600'} ${
-                                            activeAudioMessageId === msg.id ? 'w-full transition-all duration-3000' : 'w-1/3'
-                                          }`}
-                                        />
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-
-                    {/* Chat Input Controls */}
-                    {isRecordingVoice ? (
-                      <div className="bg-red-50 border-2 border-red-300 rounded-2xl p-3 flex items-center justify-between animate-pulse">
-                        <div className="flex items-center space-x-3 text-red-900 text-xs font-bold">
-                          <Mic className="w-5 h-5 text-red-600 animate-bounce" />
-                          <span>Registrazione Vocale in corso... ({recordingSeconds} sec)</span>
+                        <div className="text-right">
+                          <div className="text-xs font-bold text-amber-600">🧱 {item.briko} BRIKO</div>
+                          <div className="text-[10px] text-slate-400">{item.rating} ⭐</div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleStopRecordingAndSend}
-                          className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition-all shadow-md cursor-pointer"
-                        >
-                          Invia Vocale 🎤
-                        </button>
                       </div>
-                    ) : (
-                      <form onSubmit={handleSendTextMessage} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={inputChatText}
-                          onChange={(e) => setInputChatText(e.target.value)}
-                          placeholder="Scrivi un messaggio per la comunità..."
-                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                        />
-
-                        <button
-                          type="button"
-                          onClick={handleStartRecording}
-                          className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-3 py-2.5 rounded-xl text-xs transition-all cursor-pointer flex items-center space-x-1 shadow-md shrink-0 active:scale-95"
-                          title="Registra ed invia un messaggio vocale alla comunità"
-                        >
-                          <Mic className="w-4 h-4 text-emerald-200 animate-pulse" />
-                          <span className="hidden sm:inline">Vocale 🎤</span>
-                        </button>
-
-                        <button
-                          type="submit"
-                          disabled={!inputChatText.trim()}
-                          className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 shrink-0"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          <span>Invia</span>
-                        </button>
-                      </form>
-                    )}
-
+                    ))}
                   </div>
-
                 </div>
-              ) : (
-                <div className="bg-slate-50 rounded-3xl border border-slate-200 p-12 text-center space-y-3">
-                  <Building2 className="w-12 h-12 text-emerald-600/40 mx-auto" />
-                  <h3 className="text-base font-bold text-slate-800">Seleziona una Comunità Civica</h3>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    Clicca su una comunità a sinistra per consultare la sede, i membri ed entrare nella chat di gruppo condivisa!
-                  </p>
-                </div>
-              )}
+              </div>
             </div>
-
-          </div>
+          )}
 
         </div>
       )}
 
-      {/* SUB-TAB 3: STORIES & LEADERBOARD */}
-      {activeSubTab === 'stories' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Stories list */}
-          <div className="lg:col-span-2 space-y-4">
-            <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-              <Sparkles className="w-5 h-5 text-emerald-600" />
-              <span>Storie di Solidarietà Recente</span>
-            </h2>
-
-            <div className="space-y-4">
-              {[
-                {
-                  id: '1',
-                  title: 'Spesa e medicinali consegnati a Somma Lombardo',
-                  content: 'Grazie ai 100 BRIKO ricevuti ed al supporto di Marco, la signora Anna ha ricevuto la spesa direttamente a casa. La bricazione della gentilezza rende la nostra comunità più unita!',
-                  helper: 'MarcoSolidale',
-                  recipient: 'Signora Anna',
-                  date: 'Oggi',
-                },
-                {
-                  id: '2',
-                  title: 'Riparazione bicicletta in cortile',
-                  content: 'Un guasto al cambio della bici risolto in 15 minuti grazie agli attrezzi condivisi da Giuseppe in cambio di 10 BRIKO simbolici.',
-                  helper: 'Giuseppe_Mi',
-                  recipient: 'Davide',
-                  date: 'Ieri',
-                },
-              ].map((story) => (
-                <div key={story.id} className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-shadow space-y-3">
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">Storie dal Vicinato</span>
-                    <span>{story.date}</span>
-                  </div>
-                  <h3 className="text-base font-bold text-slate-900">{story.title}</h3>
-                  <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">{story.content}</p>
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                    <div>Aiutante: <strong className="text-slate-800">{story.helper}</strong></div>
-                    <div>Ricevente: <strong className="text-slate-800">{story.recipient}</strong></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Leaderboard */}
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
-                  <Trophy className="w-5 h-5 text-amber-500" />
-                  <span>Classifica Cittadini BRIKO</span>
-                </h3>
-                <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">Top Quartiere</span>
-              </div>
-
-              <div className="space-y-3">
-                {[
-                  { rank: 1, nickname: 'MarcoSolidale', helped: 24, briko: 450, rating: 5.0 },
-                  { rank: 2, nickname: 'ElenaVicina', helped: 19, briko: 380, rating: 4.9 },
-                  { rank: 3, nickname: 'Giuseppe_Mi', helped: 15, briko: 300, rating: 4.8 },
-                ].map((item) => (
-                  <div key={item.rank} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="flex items-center space-x-3">
-                      <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs ${
-                        item.rank === 1 ? 'bg-amber-400 text-white' : 'bg-slate-300 text-slate-800'
-                      }`}>
-                        {item.rank}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-800">{item.nickname}</div>
-                        <div className="text-[10px] text-slate-500">{item.helped} aiuti completati</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-bold text-amber-600">🧱 {item.briko} BRIKO</div>
-                      <div className="text-[10px] text-slate-400">{item.rating} ⭐</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* MODAL: Fondare una Comunità */}
+      {/* MODAL 1: Fondare una Comunità Civica */}
       {isCreateCommunityOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200">
-            <div className="bg-emerald-700 p-5 text-white flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="bg-emerald-800 p-5 text-white flex items-center justify-between">
               <h3 className="text-lg font-bold flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-emerald-200" />
                 <span>Fonda una Nuova Comunità Civica</span>
@@ -853,7 +1239,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
 
             <form onSubmit={handleCreateCommunitySubmit} className="p-6 space-y-4 text-xs">
               <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-emerald-950 leading-relaxed">
-                <strong>Regola di Trasparenza:</strong> La comunità può ospitare fino a <strong>massimo 100 membri</strong>. L'entrata è libera e nessuno può rifiutare l'ingresso di un nuovo membro finché c'è posto.
+                <strong>Regola d'Ingresso:</strong> La comunità può ospitare fino a <strong>massimo 100 membri</strong>. L'entrata è libera e garantita a chiunque senza approvazioni estenuanti.
               </div>
 
               <div>
@@ -863,7 +1249,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                   value={newCommName}
                   onChange={(e) => setNewCommName(e.target.value)}
                   placeholder="es. Comunità Civica Somma Centro e Stazione"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   required
                 />
               </div>
@@ -872,7 +1258,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                 label="Comune Sede Comunità (dall'Archivio Ufficiale) *"
                 value={newCommComune}
                 onChange={(comuneName) => setNewCommComune(comuneName)}
-                placeholder="Digita e seleziona comune (es. Milano, Somma Lombardo, Gallarate...)"
+                placeholder="Digita e seleziona comune (es. Milano, Somma Lombardo...)"
                 required
               />
 
@@ -883,7 +1269,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                   value={newCommSede}
                   onChange={(e) => setNewCommSede(e.target.value)}
                   placeholder="es. Corso Repubblica 12"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   required
                 />
               </div>
@@ -891,7 +1277,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
               <div className="bg-slate-50 border border-slate-200 p-3 rounded-xl space-y-1.5">
                 <div className="flex items-center justify-between text-slate-800 font-bold">
                   <label className="uppercase tracking-wider">Raggio d'Influenza Territoriale *</label>
-                  <span className="bg-emerald-700 text-white px-2.5 py-0.5 rounded-lg text-xs font-black">
+                  <span className="bg-emerald-800 text-white px-2.5 py-0.5 rounded-lg text-xs font-black">
                     {newCommRadiusKm} km (max 10 km)
                   </span>
                 </div>
@@ -905,7 +1291,7 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                   className="w-full accent-emerald-600 cursor-pointer"
                 />
                 <p className="text-[10px] text-slate-500">
-                  Definisce il raggio d'azione visibile sulla mappa attorno alla sede della comunità (Massimo 10 km consentito).
+                  Definisce l'area della comunità visibile sulla mappa attorno alla sede (Max 10 km).
                 </p>
               </div>
 
@@ -916,19 +1302,155 @@ export const CommunityWall: React.FC<CommunityWallProps> = ({
                   onChange={(e) => setNewCommDesc(e.target.value)}
                   rows={3}
                   placeholder="Descrivi di cosa si occupa la comunità e come supporta i cittadini..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={isCreatingComm}
-                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 {isCreatingComm ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 <span>Crea e Apri Comunità (500 BRIKO Fondo Iniziale)</span>
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: Proporre Iniziativa di Comunità */}
+      {isCreateInitiativeOpen && selectedCommunity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200">
+            <div className="bg-emerald-800 p-5 text-white flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Award className="w-5 h-5 text-emerald-200" />
+                <span>Proponi Iniziativa per {selectedCommunity.name}</span>
+              </h3>
+              <button onClick={() => setIsCreateInitiativeOpen(false)} className="text-white hover:opacity-80 p-1 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateInitiativeSubmit} className="p-6 space-y-4 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Titolo Iniziativa *</label>
+                <input
+                  type="text"
+                  value={newInitTitle}
+                  onChange={(e) => setNewInitTitle(e.target.value)}
+                  placeholder="es. Pulizia Parco di Quartiere, Caffè tra Vicini..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Data / Orario Previsto</label>
+                <input
+                  type="text"
+                  value={newInitDate}
+                  onChange={(e) => setNewInitDate(e.target.value)}
+                  placeholder="es. Sabato 20 Settembre ore 10:00"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Luogo dell'Incontro</label>
+                <input
+                  type="text"
+                  value={newInitLoc}
+                  onChange={(e) => setNewInitLoc(e.target.value)}
+                  placeholder={`es. ${selectedCommunity.sedeAddress} oppure Parco di Via Roma`}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-medium focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 uppercase tracking-wider">Descrizione Attività</label>
+                <textarea
+                  value={newInitDesc}
+                  onChange={(e) => setNewInitDesc(e.target.value)}
+                  rows={3}
+                  placeholder="Spiega cosa farete e come i vicini possono partecipare..."
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmittingInit}
+                className="w-full bg-emerald-800 hover:bg-emerald-900 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSubmittingInit ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                <span>Pubblica Iniziativa in Comunità</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: Genesi di GeoKind & La Storia dei BRIKO */}
+      {isGenesisModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 animate-in fade-in zoom-in duration-200 space-y-0">
+            
+            <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 p-6 text-white flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="bg-amber-400 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full uppercase">
+                  📜 Origine & Filosofia
+                </span>
+                <h3 className="text-xl font-black">Genesi di GeoKind & I BRIKO</h3>
+              </div>
+              <button onClick={() => setIsGenesisModalOpen(false)} className="text-white hover:opacity-80 p-1 cursor-pointer">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs sm:text-sm text-slate-700 leading-relaxed max-h-[70vh] overflow-y-auto">
+              <div className="space-y-2">
+                <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+                  <span>🧱 1. Che cos'è la Bricazione (BRIKO)?</span>
+                </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Nella tradizione del Sud Italia e del mutuo soccorso contadino, la <em>"bricazione"</em> indica il legame di gratitudine e l'impegno morale di contraccambiare un aiuto o un favore ricevuto tra vicini. Non è una moneta speculativa né un mezzo di profitto, ma la misura della generosità reciproca.
+                </p>
+              </div>
+
+              <div className="space-y-2 border-t border-slate-100 pt-3">
+                <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+                  <span>🏛️ 2. Perché Comunità al massimo di 100 Membri?</span>
+                </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  I social media tradizionali disperdono le persone in grandi numeri anonimi. Su <strong>GeoKind</strong>, ogni Comunità Civica ospita un massimo di 100 membri per mantenere la dimensione calda, umana e di quartiere, dove ci si conosce, ci si saluta per strada e ci si può fidare l'un l'altro.
+                </p>
+              </div>
+
+              <div className="space-y-2 border-t border-slate-100 pt-3">
+                <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
+                  <span>🤝 3. Ingresso Garantito e Libertà</span>
+                </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Nessuna comunità è un club chiuso o selettivo: finché ci sono posti disponibili nei 100 membri, l'ingresso è immediato in 1-click. I cittadini possono partecipare alla chat di gruppo, inviare messaggi vocali e proporre o partecipare ad iniziative locali.
+                </p>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-emerald-950 text-xs space-y-1">
+                <strong>💡 Nota dell'Autore:</strong> GeoKind nasce per ridare valore al vicinato reale. La tecnologia deve essere solo il mezzo per far incontrare le persone nella vita vera!
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 border-t border-slate-100 text-right">
+              <button
+                onClick={() => setIsGenesisModalOpen(false)}
+                className="bg-emerald-800 hover:bg-emerald-900 text-white font-bold px-5 py-2 rounded-xl text-xs cursor-pointer shadow-xs"
+              >
+                Ho Capito, Grazie!
+              </button>
+            </div>
+
           </div>
         </div>
       )}

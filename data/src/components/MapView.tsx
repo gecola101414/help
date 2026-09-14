@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { HelpItem, UserProfile, DEFAULT_HELP_CATEGORIES } from '../types';
+import { HelpItem, UserProfile, Community, AreaSponsor, SponsorInitiative, isCommunityExpired, DEFAULT_HELP_CATEGORIES } from '../types';
 import L from 'leaflet';
 import {
   Navigation,
@@ -15,17 +15,28 @@ import {
   Sparkles,
   SlidersHorizontal,
   Check,
-  Radio
-, User } from 'lucide-react';
+  Radio,
+  User,
+  ChevronUp,
+  ChevronDown,
+  Building2,
+  Store,
+  Award
+} from 'lucide-react';
 
 interface MapViewProps {
   items: HelpItem[];
   user: UserProfile | null;
+  communities?: Community[];
+  sponsors?: AreaSponsor[];
+  initiatives?: SponsorInitiative[];
   onSelectItem: (item: HelpItem) => void;
   onOpenCreate: () => void;
   onUpdateLocation: () => void;
   followedUserId?: string | null;
   setFollowedUserId?: (id: string | null) => void;
+  onOpenCommunity?: (comm: Community) => void;
+  onOpenSponsor?: () => void;
 }
 
 interface PositionedItem {
@@ -35,24 +46,67 @@ interface PositionedItem {
   isDisplaced: boolean;
 }
 
+const getCategorySymbol = (catName: string) => {
+  const c = (catName || '').toLowerCase();
+  if (c.includes('spesa') || c.includes('commissioni')) return '🛒';
+  if (c.includes('domestici') || c.includes('lavoretti')) return '🔧';
+  if (c.includes('compagnia') || c.includes('assistenza')) return '☕';
+  if (c.includes('digital') || c.includes('informatico')) return '💻';
+  if (c.includes('riparazione') || c.includes('bici')) return '🚲';
+  if (c.includes('ripetizioni') || c.includes('studio')) return '📚';
+  if (c.includes('burocrazia') || c.includes('pratiche')) return '📄';
+  if (c.includes('trasporto') || c.includes('passaggio')) return '🚗';
+  if (c.includes('animali') || c.includes('pet')) return '🐾';
+  if (c.includes('utensili') || c.includes('attrezzi')) return '🔨';
+  return '💡';
+};
+
+interface PositionedCluster {
+  id: string;
+  lat: number;
+  lng: number;
+  items: HelpItem[];
+  isCluster: boolean;
+}
+
 export const MapView: React.FC<MapViewProps> = ({
   items,
   user,
+  communities = [],
+  sponsors = [],
+  initiatives = [],
   onSelectItem,
   onOpenCreate,
   onUpdateLocation,
   followedUserId,
   setFollowedUserId,
+  onOpenCommunity,
+  onOpenSponsor,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<L.Marker[]>([]);
+  const entityMarkersRef = useRef<L.Marker[]>([]);
   const circlesRef = useRef<L.Circle[]>([]);
   const userMarkerRef = useRef<L.Marker | null>(null);
   const itemMarkersMapRef = useRef<Map<string, L.Marker>>(new Map());
   const hasInitializedViewRef = useRef(false);
 
   const [currentZoom, setCurrentZoom] = useState<number>(12);
+  const [activeClusterModal, setActiveClusterModal] = useState<HelpItem[] | null>(null);
+
+  // Layer toggles
+  const [showItemsLayer, setShowItemsLayer] = useState<boolean>(true);
+  const [showCommunitiesLayer, setShowCommunitiesLayer] = useState<boolean>(true);
+  const [showSponsorsLayer, setShowSponsorsLayer] = useState<boolean>(true);
+
+  // Modal local filter states
+  const [modalFilterType, setModalFilterType] = useState<'all' | 'offer' | 'request'>('all');
+  const [modalSelectedCategory, setModalSelectedCategory] = useState<string>('all');
+
+  // Map Filter Bar Collapsible State
+  const [isFilterBarOpen, setIsFilterBarOpen] = useState<boolean>(false);
+  const [isLegendOpen, setIsLegendOpen] = useState<boolean>(true);
 
   // Filtering states
   const [filterType, setFilterType] = useState<'all' | 'offer' | 'request' | 'free'>('all');
@@ -79,6 +133,13 @@ export const MapView: React.FC<MapViewProps> = ({
   // Filtered items based on active criteria
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      // Exclude cancelled or expired items ("se si annulla scompare")
+      if (item.status === 'cancelled') return false;
+      if (item.durationMinutes && item.durationMinutes > 0) {
+        const expiresAt = item.createdAt + item.durationMinutes * 60000;
+        if (Date.now() > expiresAt) return false;
+      }
+
       // Follow filter
       if (followedUserId && item.userId !== followedUserId) {
         return false;
@@ -120,23 +181,21 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   }, [items, filterType, filterTracking, selectedCategory, searchQuery, onlyInActionRadius]);
 
-  // Compute positioned items with intelligent anti-overlap de-clustering
-  const positionedItems: PositionedItem[] = useMemo(() => {
-    if (!antiOverlap) {
-      return filteredItems
-        .filter((item) => item.location && item.location.lat && item.location.lng)
-        .map((item) => ({
-          item,
-          displayLat: item.location.lat,
-          displayLng: item.location.lng,
-          isDisplaced: false,
-        }));
-    }
-
-    // Group items that are within ~60 meters of each other (prevents visual stacking)
+  // Compute positioned clusters for announcements within 100m radius
+  const positionedClusters: PositionedCluster[] = useMemo(() => {
     const validItems = filteredItems.filter(
       (item) => item.location && item.location.lat && item.location.lng
     );
+
+    if (!antiOverlap) {
+      return validItems.map((item) => ({
+        id: item.id,
+        lat: item.location.lat,
+        lng: item.location.lng,
+        items: [item],
+        isCluster: false,
+      }));
+    }
 
     const clusters: HelpItem[][] = [];
 
@@ -145,7 +204,8 @@ export const MapView: React.FC<MapViewProps> = ({
         const ref = cluster[0];
         const dLat = Math.abs(ref.location.lat - item.location.lat);
         const dLng = Math.abs(ref.location.lng - item.location.lng);
-        return dLat < 0.00065 && dLng < 0.00085;
+        // ~100 meters threshold (~0.0009 degrees)
+        return dLat < 0.0009 && dLng < 0.0011;
       });
 
       if (existingCluster) {
@@ -155,40 +215,49 @@ export const MapView: React.FC<MapViewProps> = ({
       }
     });
 
-    const result: PositionedItem[] = [];
-
-    clusters.forEach((cluster) => {
+    return clusters.map((cluster, idx) => {
+      const baseLat = cluster[0].location.lat;
+      const baseLng = cluster[0].location.lng;
       if (cluster.length === 1) {
-        result.push({
-          item: cluster[0],
-          displayLat: cluster[0].location.lat,
-          displayLng: cluster[0].location.lng,
-          isDisplaced: false,
-        });
+        return {
+          id: cluster[0].id,
+          lat: baseLat,
+          lng: baseLng,
+          items: cluster,
+          isCluster: false,
+        };
       } else {
-        // Fan out radially so every marker is independently visible and clickable
-        const count = cluster.length;
-        const baseLat = cluster[0].location.lat;
-        const baseLng = cluster[0].location.lng;
-        const radius = 0.00045 * Math.min(1.4, Math.sqrt(count / 2));
-
-        cluster.forEach((item, index) => {
-          const angle = (index * 2 * Math.PI) / count - Math.PI / 2;
-          const displayLat = baseLat + Math.cos(angle) * radius;
-          const displayLng = baseLng + Math.sin(angle) * (radius * 1.35);
-
-          result.push({
-            item,
-            displayLat,
-            displayLng,
-            isDisplaced: true,
-          });
-        });
+        return {
+          id: `cluster-${idx}-${baseLat}-${baseLng}`,
+          lat: baseLat,
+          lng: baseLng,
+          items: cluster,
+          isCluster: true,
+        };
       }
     });
-
-    return result;
   }, [filteredItems, antiOverlap]);
+
+  // Categories available inside the open cluster modal
+  const clusterCategories = useMemo(() => {
+    if (!activeClusterModal) return [];
+    const set = new Set<string>();
+    activeClusterModal.forEach((i) => {
+      if (i.category) set.add(i.category);
+    });
+    return Array.from(set);
+  }, [activeClusterModal]);
+
+  // Filtered items inside the open cluster modal
+  const filteredClusterItems = useMemo(() => {
+    if (!activeClusterModal) return [];
+    return activeClusterModal.filter((item) => {
+      if (modalFilterType === 'offer' && item.type !== 'offer') return false;
+      if (modalFilterType === 'request' && item.type !== 'request') return false;
+      if (modalSelectedCategory !== 'all' && item.category !== modalSelectedCategory) return false;
+      return true;
+    });
+  }, [activeClusterModal, modalFilterType, modalSelectedCategory]);
 
   const hasActiveFilters = filterType !== 'all' || selectedCategory !== 'all' || searchQuery.trim().length > 0;
 
@@ -301,7 +370,7 @@ export const MapView: React.FC<MapViewProps> = ({
     }
   }, [userLat, userLng, user?.location?.address]);
 
-  // 3. Update Item Markers with filtered and positioned items (Zero auto-pan/reset)
+  // 3. Update Item Markers with filtered and positioned clusters (Zero auto-pan/reset)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -313,125 +382,167 @@ export const MapView: React.FC<MapViewProps> = ({
     circlesRef.current = [];
     itemMarkersMapRef.current.clear();
 
-    // Render positioned items
-    positionedItems.forEach(({ item, displayLat, displayLng, isDisplaced }) => {
-      const isOffer = item.type === 'offer';
-      const isStatic = item.trackingType === 'static';
-      
-      // Color and visual identity:
-      // Static: warm amber/orange (#d97706)
-      // Dynamic offer: teal (#0d9488)
-      // Dynamic request: blue (#2563eb)
-      const bgColor = isStatic
-        ? (isOffer ? '#d97706' : '#b45309')
-        : (isOffer ? '#0d9488' : '#2563eb');
-      
-      const emoji = isStatic
-        ? '📌'
-        : (isOffer ? '🤝' : '🆘');
+    if (!showItemsLayer) return;
 
-      // Draw Action Radius Circle (100 metri fissi per dinamici, fino a 10 km per statici)
-      if (showActionCircles && item.location?.lat) {
-        const radiusMeters = isStatic
-          ? Math.min(10000, Math.max(100, (item.actionRadiusKm || 1) * 1000))
-          : 100; // 100 metri fissi per incentivare l'interazione umana diretta
+    // Render positioned clusters
+    positionedClusters.forEach(({ id, lat, lng, items: clusterItems, isCluster }) => {
+      if (!isCluster) {
+        const item = clusterItems[0];
+        const isOffer = item.type === 'offer';
+        const isStatic = item.trackingType === 'static';
+        
+        const bgColor = isStatic
+          ? (isOffer ? '#d97706' : '#b45309')
+          : (isOffer ? '#0d9488' : '#2563eb');
+        
+        const emoji = isStatic
+          ? '📌'
+          : (isOffer ? '🤝' : '🆘');
 
-        const circle = L.circle([item.location.lat, item.location.lng], {
-          radius: radiusMeters,
-          color: bgColor,
-          fillColor: bgColor,
-          fillOpacity: isStatic ? 0.08 : 0.16,
-          weight: isStatic ? 2 : 2.5,
-          dashArray: isStatic ? '4, 4' : undefined,
-        }).addTo(map);
-        circlesRef.current.push(circle);
-      }
+        // Draw Action Radius Circle
+        if (showActionCircles && item.location?.lat) {
+          const radiusMeters = isStatic
+            ? Math.min(10000, Math.max(100, (item.actionRadiusKm || 1) * 1000))
+            : 100;
 
-      let customIcon: L.DivIcon;
-
-      if (markerStyle === 'compact') {
-        // Compact circular badge
-        customIcon = L.divIcon({
-          className: 'custom-help-marker-compact',
-          html: `<div style="background-color: ${bgColor}; color: white; width: 32px; height: 32px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 8px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; transition: transform 0.15s ease;" title="${item.title}">
-            ${emoji}
-          </div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
-        });
-      } else {
-        // Full pill marker with title and dynamic/static indicator
-        customIcon = L.divIcon({
-          className: 'custom-help-marker-pill',
-          html: `<div style="background-color: ${bgColor}; color: white; padding: 5px 9px; border-radius: 14px; font-size: 11px; font-weight: bold; white-space: nowrap; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.25); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer; max-width: 175px; overflow: hidden; text-overflow: ellipsis;">
-            <span>${emoji}</span>
-            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.title.substring(0, 18)}</span>
-          </div>`,
-          iconSize: [135, 32],
-          iconAnchor: [67, 16],
-        });
-      }
-
-      const marker = L.marker([displayLat, displayLng], { icon: customIcon }).addTo(map);
-
-      // Raise marker on hover so it sits on top of any neighbors
-      marker.on('mouseover', () => {
-        marker.setZIndexOffset(1000);
-      });
-      marker.on('mouseout', () => {
-        marker.setZIndexOffset(0);
-      });
-
-      marker.on('click', () => {
-        onSelectItem(item);
-      });
-
-      const distText = item.distanceKm !== undefined
-        ? item.distanceKm < 0.1
-          ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
-          : item.distanceKm < 1
-          ? `${Math.round(item.distanceKm * 1000)} m da te`
-          : `${item.distanceKm.toFixed(1)} km da te`
-        : '';
-
-      const popupContent = document.createElement('div');
-      popupContent.style.fontFamily = 'sans-serif';
-      popupContent.style.padding = '6px';
-      popupContent.style.minWidth = '230px';
-      popupContent.innerHTML = `
-        <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${bgColor}; margin-bottom: 2px;">
-          ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Offerta Dinamica (Segue persona)' : '🏃 Richiesta Dinamica (Segue persona)')}
-        </div>
-        <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${item.title}</div>
-        <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} ${distText ? `• <strong>${distText}</strong>` : ''}</div>
-        <div style="font-size: 11px; color: ${isStatic ? '#92400e' : '#0f766e'}; background-color: ${isStatic ? '#fffbeb' : '#f0fdfa'}; border: 1px solid ${isStatic ? '#fde68a' : '#ccfbf1'}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4;">
-          ${isStatic
-            ? `📌 <strong>Punto Fisso:</strong> Area d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (Math.round(item.actionRadiusKm * 1000)) + ' m' : item.actionRadiusKm + ' km') : '1 km'}</strong> (max 10 km). Visibile solo passando sul posto.`
-            : `🏃 <strong>Dinamico (Segue ${item.userNickname}):</strong> Distanza fissa <strong>100 metri</strong> per stimolare l'interazione umana diretta.`
-          }
-        </div>
-        <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
-        ${isDisplaced ? '<div style="font-size: 10px; color: #0d9488; background-color: #f0fdf4; padding: 2px 6px; border-radius: 4px; margin-bottom: 8px; display: inline-block;">📍 Posizione distanziata per leggibilità</div>' : ''}
-        <button id="popup-btn-${item.id}" style="background-color: ${bgColor}; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
-      `;
-
-      marker.bindPopup(popupContent);
-
-      marker.on('popupopen', () => {
-        const btn = document.getElementById(`popup-btn-${item.id}`);
-        if (btn) {
-          btn.onclick = () => onSelectItem(item);
+          const circle = L.circle([item.location.lat, item.location.lng], {
+            radius: radiusMeters,
+            color: bgColor,
+            fillColor: bgColor,
+            fillOpacity: isStatic ? 0.08 : 0.16,
+            weight: isStatic ? 2 : 2.5,
+            dashArray: isStatic ? '4, 4' : undefined,
+          }).addTo(map);
+          circlesRef.current.push(circle);
         }
-      });
 
-      markersRef.current.push(marker);
-      itemMarkersMapRef.current.set(item.id, marker);
+        let customIcon: L.DivIcon;
+
+        // Lightweight Single Marker: Clean circular badge showing ONLY category symbol
+        customIcon = L.divIcon({
+          className: 'custom-help-marker-single',
+          html: `<div style="background-color: ${bgColor}; color: white; width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.25); display: flex; align-items: center; justify-content: center; font-size: 17px; cursor: pointer; transition: transform 0.15s ease;" title="${item.title}">
+            ${getCategorySymbol(item.category)}
+          </div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        });
+
+        const marker = L.marker([lat, lng], { icon: customIcon }).addTo(map);
+
+        marker.on('mouseover', () => {
+          marker.setZIndexOffset(1000);
+        });
+        marker.on('mouseout', () => {
+          marker.setZIndexOffset(0);
+        });
+
+        marker.on('click', () => {
+          onSelectItem(item);
+        });
+
+        const distText = item.distanceKm !== undefined
+          ? item.distanceKm < 0.1
+            ? `${Math.round(item.distanceKm * 1000)} m da te (Entro 100m!)`
+            : item.distanceKm < 1
+            ? `${Math.round(item.distanceKm * 1000)} m da te`
+            : `${item.distanceKm.toFixed(1)} km da te`
+          : '';
+
+        const popupContent = document.createElement('div');
+        popupContent.style.fontFamily = 'sans-serif';
+        popupContent.style.padding = '6px';
+        popupContent.style.minWidth = '230px';
+        popupContent.innerHTML = `
+          <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: ${bgColor}; margin-bottom: 2px;">
+            ${isStatic ? '📌 Annuncio Fisso (Luogo)' : (isOffer ? '🏃 Disponibilità Dinamica' : '🏃 Richiesta Dinamica')}
+          </div>
+          <div style="font-weight: bold; font-size: 14px; color: #1f2937; margin-bottom: 4px;">${getCategorySymbol(item.category)} ${item.title}</div>
+          <div style="font-size: 12px; color: #4b5563; margin-bottom: 4px;">${item.userNickname} ${distText ? `• <strong>${distText}</strong>` : ''}</div>
+          <div style="font-size: 11px; color: ${isStatic ? '#92400e' : (isOffer ? '#9f1239' : '#1e40af')}; background-color: ${isStatic ? '#fffbeb' : (isOffer ? '#fff1f2' : '#eff6ff')}; border: 1px solid ${isStatic ? '#fde68a' : (isOffer ? '#fecdd3' : '#bfdbfe')}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4;">
+            ${isStatic
+              ? `📌 <strong>Punto Fisso:</strong> Area d'influenza <strong>${item.actionRadiusKm ? (item.actionRadiusKm < 1 ? (Math.round(item.actionRadiusKm * 1000)) + ' m' : item.actionRadiusKm + ' km') : '1 km'}</strong> (max 10 km).`
+              : `🏃 <strong>Dinamico (Segue ${item.userNickname}):</strong> Distanza fissa <strong>100 metri</strong> per stimolare l'interazione umana diretta.`
+            }
+          </div>
+          <div style="font-size: 11px; color: #6b7280; margin-bottom: 6px;">${item.location?.address || ''}</div>
+          <button id="popup-btn-${item.id}" style="background-color: ${bgColor}; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Visualizza Dettagli</button>
+        `;
+
+        marker.bindPopup(popupContent);
+
+        marker.on('popupopen', () => {
+          const btn = document.getElementById(`popup-btn-${item.id}`);
+          if (btn) {
+            btn.onclick = () => onSelectItem(item);
+          }
+        });
+
+        markersRef.current.push(marker);
+        itemMarkersMapRef.current.set(item.id, marker);
+      } else {
+        // Lightweight Cluster Union Marker (Removed 'Gruppo' text, icon 🔗 + count + emojis)
+        const count = clusterItems.length;
+        const emojisPreview = Array.from(new Set(clusterItems.map(i => getCategorySymbol(i.category)))).slice(0, 3).join(' ');
+
+        // Draw Group Action Radius Circle
+        if (showActionCircles && lat && lng) {
+          const staticRadii = clusterItems
+            .filter((i) => i.trackingType === 'static')
+            .map((i) => Math.min(10000, Math.max(100, (i.actionRadiusKm || 1) * 1000)));
+
+          let groupRadiusMeters = 150;
+          if (staticRadii.length > 0) {
+            groupRadiusMeters = Math.max(...staticRadii);
+          } else {
+            groupRadiusMeters = Math.min(300, 150 + (clusterItems.length - 1) * 25);
+          }
+
+          const groupCircle = L.circle([lat, lng], {
+            radius: groupRadiusMeters,
+            color: '#6366f1',
+            fillColor: '#8b5cf6',
+            fillOpacity: 0.14,
+            weight: 2,
+            dashArray: '5, 5',
+          }).addTo(map);
+          circlesRef.current.push(groupCircle);
+        }
+
+        const clusterIcon = L.divIcon({
+          className: 'custom-help-cluster-marker',
+          html: `<div style="background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; padding: 4px 9px; border-radius: 20px; font-size: 13px; font-weight: 800; white-space: nowrap; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.45); border: 2.5px solid white; display: flex; align-items: center; gap: 5px; cursor: pointer;" title="${count} gentilezze raggruppate in raggio 100m">
+            <span style="font-size: 14px;">🔗</span>
+            <span style="background: rgba(255,255,255,0.25); padding: 1px 6px; border-radius: 12px; font-size: 12px; font-weight: 900;">${count}</span>
+            <span style="font-size: 12px;">${emojisPreview}</span>
+          </div>`,
+          iconSize: [80, 32],
+          iconAnchor: [40, 16],
+        });
+
+        const clusterMarker = L.marker([lat, lng], { icon: clusterIcon }).addTo(map);
+
+        clusterMarker.on('mouseover', () => {
+          clusterMarker.setZIndexOffset(1000);
+        });
+        clusterMarker.on('mouseout', () => {
+          clusterMarker.setZIndexOffset(0);
+        });
+
+        clusterMarker.on('click', () => {
+          setModalFilterType('all');
+          setModalSelectedCategory('all');
+          setActiveClusterModal(clusterItems);
+        });
+
+        markersRef.current.push(clusterMarker);
+      }
     });
 
     // ONLY on first initial load, frame all markers once
     if (!hasInitializedViewRef.current && (items.length > 0 || userLat)) {
       hasInitializedViewRef.current = true;
-      const all = [...markersRef.current];
+      const all = [...markersRef.current, ...entityMarkersRef.current];
       if (userMarkerRef.current) all.push(userMarkerRef.current);
       if (all.length > 0) {
         try {
@@ -444,7 +555,386 @@ export const MapView: React.FC<MapViewProps> = ({
         map.setView([userLat, userLng], 12);
       }
     }
-  }, [positionedItems, markerStyle, showActionCircles, onSelectItem]);
+  }, [positionedClusters, markerStyle, showActionCircles, onSelectItem, antiOverlap, showItemsLayer]);
+
+  // 4. Update Communities, Sponsors and Initiatives Markers on Map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    // Clear previous entity markers
+    entityMarkersRef.current.forEach((m) => m.remove());
+    entityMarkersRef.current = [];
+
+    const COMUNI_COORDS: Record<string, { lat: number; lng: number }> = {
+      'somma lombardo': { lat: 45.6836, lng: 8.7071 },
+      'gallarate': { lat: 45.6653, lng: 8.7911 },
+      'milano': { lat: 45.4642, lng: 9.1900 },
+      'roma': { lat: 41.9028, lng: 12.4964 },
+      'torino': { lat: 45.0703, lng: 7.6869 },
+      'bologna': { lat: 44.4949, lng: 11.3426 },
+      'firenze': { lat: 43.7696, lng: 11.2558 },
+      'napoli': { lat: 40.8518, lng: 14.2681 },
+      'varese': { lat: 45.8206, lng: 8.8251 },
+      'busto arsizio': { lat: 45.6119, lng: 8.8510 },
+    };
+
+    // A. Render Communities Markers (Clustered & Single Symbol)
+    if (showCommunitiesLayer && communities) {
+      const activeCommList = communities.filter((c) => !isCommunityExpired(c));
+
+      // Draw action radius circles for each community
+      if (showActionCircles) {
+        activeCommList.forEach((comm) => {
+          const comuneKey = (comm.comune || '').toLowerCase().trim();
+          const fallback = COMUNI_COORDS[comuneKey] || { lat: userLat + 0.003, lng: userLng + 0.003 };
+          const lat = comm.location?.lat || fallback.lat;
+          const lng = comm.location?.lng || fallback.lng;
+
+          if (lat && lng) {
+            const radiusMeters = Math.min(10000, Math.max(100, (comm.actionRadiusKm || 5) * 1000));
+            const commCircle = L.circle([lat, lng], {
+              radius: radiusMeters,
+              color: '#0f766e',
+              fillColor: '#0d9488',
+              fillOpacity: 0.1,
+              weight: 2,
+              dashArray: '4, 4',
+            }).addTo(map);
+            circlesRef.current.push(commCircle);
+          }
+        });
+      }
+
+      // Group nearby communities into clusters (~100m)
+      const commClusters: Community[][] = [];
+      activeCommList.forEach((comm) => {
+        const comuneKey = (comm.comune || '').toLowerCase().trim();
+        const fallback = COMUNI_COORDS[comuneKey] || { lat: userLat + 0.003, lng: userLng + 0.003 };
+        const lat = comm.location?.lat || fallback.lat;
+        const lng = comm.location?.lng || fallback.lng;
+
+        const existing = commClusters.find((group) => {
+          const ref = group[0];
+          const refComune = (ref.comune || '').toLowerCase().trim();
+          const refFallback = COMUNI_COORDS[refComune] || { lat: userLat + 0.003, lng: userLng + 0.003 };
+          const rLat = ref.location?.lat || refFallback.lat;
+          const rLng = ref.location?.lng || refFallback.lng;
+          return Math.abs(rLat - lat) < 0.0009 && Math.abs(rLng - lng) < 0.0011;
+        });
+
+        if (existing) {
+          existing.push(comm);
+        } else {
+          commClusters.push([comm]);
+        }
+      });
+
+      // Render markers for community clusters
+      commClusters.forEach((group) => {
+        const refComune = (group[0].comune || '').toLowerCase().trim();
+        const fallback = COMUNI_COORDS[refComune] || { lat: userLat + 0.003, lng: userLng + 0.003 };
+        const lat = group[0].location?.lat || fallback.lat;
+        const lng = group[0].location?.lng || fallback.lng;
+
+        if (group.length === 1) {
+          const comm = group[0];
+          const isOfficial = (comm.memberCount || 0) >= 10;
+          const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+          const age = Date.now() - (comm.createdAt || Date.now());
+          const daysLeft = Math.max(0, Math.ceil((ONE_MONTH_MS - age) / (24 * 60 * 60 * 1000)));
+
+          // Single Community Marker: Clean circular icon badge ONLY 🏛️
+          const commIcon = L.divIcon({
+            className: 'custom-community-marker-single',
+            html: `<div style="background: linear-gradient(135deg, #0f766e, #0d9488); color: white; width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 10px rgba(15, 118, 110, 0.45); display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer;" title="${comm.name}">
+              🏛️
+            </div>`,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18],
+          });
+
+          const marker = L.marker([lat, lng], { icon: commIcon }).addTo(map);
+
+          const popupContent = document.createElement('div');
+          popupContent.style.fontFamily = 'sans-serif';
+          popupContent.style.padding = '6px';
+          popupContent.style.minWidth = '240px';
+          popupContent.innerHTML = `
+            <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: #0f766e; margin-bottom: 2px;">
+              🏛️ Comunità Civica • ${comm.comune}
+            </div>
+            <div style="font-weight: bold; font-size: 14px; color: #0f172a; margin-bottom: 4px;">${comm.name}</div>
+            <div style="font-size: 11px; color: #475569; margin-bottom: 4px;">📍 Sede: ${comm.sedeAddress}</div>
+            <div style="font-size: 11px; color: #0f766e; font-weight: bold; margin-bottom: 4px;">
+              🌐 Raggio d'influenza: ${comm.actionRadiusKm || 5} km (max 10 km)
+            </div>
+            <div style="font-size: 11px; color: ${isOfficial ? '#15803d' : '#b45309'}; background: ${isOfficial ? '#f0fdf4' : '#fffbeb'}; border: 1px solid ${isOfficial ? '#bbf7d0' : '#fde68a'}; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px; line-height: 1.4; font-weight: 600;">
+              ${isOfficial 
+                ? `✅ <strong>Comunità Ufficiale Permanente:</strong> ${comm.memberCount} membri attivi.` 
+                : `⏳ <strong>Prova 1 Mese:</strong> ${daysLeft} gg rimasti per raggiungere 10 membri (${comm.memberCount}/10).`}
+            </div>
+            <div style="font-size: 11px; color: #0284c7; font-weight: bold; margin-bottom: 6px;">
+              🧱 Tesoreria: ${comm.brikoTreasury || 500} BRIKO
+            </div>
+            <button id="comm-btn-${comm.id}" style="background-color: #0f766e; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Apri Comunità Civica</button>
+          `;
+
+          marker.bindPopup(popupContent);
+          marker.on('popupopen', () => {
+            const btn = document.getElementById(`comm-btn-${comm.id}`);
+            if (btn && onOpenCommunity) {
+              btn.onclick = () => onOpenCommunity(comm);
+            }
+          });
+
+          entityMarkersRef.current.push(marker);
+        } else {
+          // Multiple Communities Cluster Marker (Icon + Count Badge)
+          const clusterIcon = L.divIcon({
+            className: 'custom-community-cluster-marker',
+            html: `<div style="background: linear-gradient(135deg, #0f766e, #0d9488); color: white; padding: 4px 9px; border-radius: 20px; font-size: 13px; font-weight: 800; white-space: nowrap; box-shadow: 0 4px 12px rgba(15, 118, 110, 0.45); border: 2.5px solid white; display: flex; align-items: center; gap: 5px; cursor: pointer;" title="${group.length} Comunità vicine">
+              <span style="font-size: 15px;">🏛️</span>
+              <span style="background: rgba(255,255,255,0.25); padding: 1px 6px; border-radius: 12px; font-size: 12px; font-weight: 900;">${group.length}</span>
+            </div>`,
+            iconSize: [65, 32],
+            iconAnchor: [32, 16],
+          });
+
+          const marker = L.marker([lat, lng], { icon: clusterIcon }).addTo(map);
+
+          const popupContent = document.createElement('div');
+          popupContent.style.fontFamily = 'sans-serif';
+          popupContent.style.padding = '6px';
+          popupContent.style.minWidth = '240px';
+
+          const itemsHtml = group.map((c) => `
+            <div style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">
+              <div style="font-weight: 800; font-size: 13px; color: #0f172a;">🏛️ ${c.name}</div>
+              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">📍 ${c.comune} • ${c.memberCount} membri</div>
+              <button id="comm-cluster-btn-${c.id}" style="background-color: #0f766e; color: white; border: none; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; margin-top: 5px; width: 100%;">Apri Questa Comunità</button>
+            </div>
+          `).join('');
+
+          popupContent.innerHTML = `
+            <div style="font-size: 11px; font-weight: 900; color: #0f766e; margin-bottom: 6px; text-transform: uppercase;">
+              🏛️ ${group.length} Comunità Civiche in questa zona
+            </div>
+            ${itemsHtml}
+          `;
+
+          marker.bindPopup(popupContent);
+          marker.on('popupopen', () => {
+            group.forEach((c) => {
+              const btn = document.getElementById(`comm-cluster-btn-${c.id}`);
+              if (btn && onOpenCommunity) {
+                btn.onclick = () => onOpenCommunity(c);
+              }
+            });
+          });
+
+          entityMarkersRef.current.push(marker);
+        }
+      });
+    }
+
+    // B. Render Sponsors & Initiatives Markers (Clustered & Single Symbol)
+    if (showSponsorsLayer && (sponsors || initiatives)) {
+      type SponsorItem = 
+        | { kind: 'sponsor'; data: AreaSponsor; lat: number; lng: number }
+        | { kind: 'initiative'; data: SponsorInitiative; lat: number; lng: number };
+
+      const sponsorItemsList: SponsorItem[] = [];
+
+      if (sponsors) {
+        sponsors.forEach((s) => {
+          const comuneKey = (s.comune || '').toLowerCase().trim();
+          const fallback = COMUNI_COORDS[comuneKey] || { lat: userLat + 0.002, lng: userLng - 0.003 };
+          sponsorItemsList.push({
+            kind: 'sponsor',
+            data: s,
+            lat: s.location?.lat || fallback.lat,
+            lng: s.location?.lng || fallback.lng,
+          });
+        });
+      }
+
+      if (initiatives) {
+        initiatives.forEach((init) => {
+          const comuneKey = (init.comune || '').toLowerCase().trim();
+          const fallback = COMUNI_COORDS[comuneKey] || { lat: userLat - 0.003, lng: userLng + 0.002 };
+          sponsorItemsList.push({
+            kind: 'initiative',
+            data: init,
+            lat: init.location?.lat || fallback.lat,
+            lng: init.location?.lng || fallback.lng,
+          });
+        });
+      }
+
+      // Group nearby sponsors / initiatives into clusters (~100m)
+      const sponsorClusters: SponsorItem[][] = [];
+      sponsorItemsList.forEach((item) => {
+        const existing = sponsorClusters.find((group) => {
+          const ref = group[0];
+          return Math.abs(ref.lat - item.lat) < 0.0009 && Math.abs(ref.lng - item.lng) < 0.0011;
+        });
+
+        if (existing) {
+          existing.push(item);
+        } else {
+          sponsorClusters.push([item]);
+        }
+      });
+
+      // Render markers for sponsor clusters
+      sponsorClusters.forEach((group) => {
+        const { lat, lng } = group[0];
+
+        if (group.length === 1) {
+          const item = group[0];
+          if (item.kind === 'sponsor') {
+            const s = item.data;
+            // Single Sponsor Marker: Clean circular icon badge ONLY 🏪
+            const sponsorIcon = L.divIcon({
+              className: 'custom-sponsor-marker-single',
+              html: `<div style="background: linear-gradient(135deg, #d97706, #b45309); color: white; width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 10px rgba(217, 119, 6, 0.45); display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer;" title="${s.name}">
+                🏪
+              </div>`,
+              iconSize: [36, 36],
+              iconAnchor: [18, 18],
+            });
+
+            const marker = L.marker([lat, lng], { icon: sponsorIcon }).addTo(map);
+
+            const popupContent = document.createElement('div');
+            popupContent.style.fontFamily = 'sans-serif';
+            popupContent.style.padding = '6px';
+            popupContent.style.minWidth = '230px';
+            popupContent.innerHTML = `
+              <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: #d97706; margin-bottom: 2px;">
+                🏪 Sponsor & Ente Locale • ${s.comune}
+              </div>
+              <div style="font-weight: bold; font-size: 14px; color: #0f172a; margin-bottom: 4px;">${s.name}</div>
+              <div style="font-size: 11px; color: #475569; margin-bottom: 4px;">${s.category}</div>
+              <div style="font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px;">
+                "${s.message}"
+              </div>
+              <div style="font-size: 11px; color: #d97706; font-weight: bold; margin-bottom: 6px;">
+                🧱 BRIKO Offerti: +${s.brikoOffered} BRIKO
+              </div>
+              <button id="spon-btn-${s.id}" style="background-color: #d97706; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Scopri Sponsor ed Ente</button>
+            `;
+
+            marker.bindPopup(popupContent);
+            marker.on('popupopen', () => {
+              const btn = document.getElementById(`spon-btn-${s.id}`);
+              if (btn && onOpenSponsor) {
+                btn.onclick = () => onOpenSponsor();
+              }
+            });
+
+            entityMarkersRef.current.push(marker);
+          } else {
+            const init = item.data;
+            // Single Initiative Marker: Clean circular icon badge ONLY 🎖️
+            const initIcon = L.divIcon({
+              className: 'custom-initiative-marker-single',
+              html: `<div style="background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; width: 36px; height: 36px; border-radius: 50%; border: 2.5px solid white; box-shadow: 0 4px 10px rgba(124, 58, 237, 0.45); display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer;" title="${init.title}">
+                🎖️
+              </div>`,
+              iconSize: [36, 36],
+              iconAnchor: [18, 18],
+            });
+
+            const marker = L.marker([lat, lng], { icon: initIcon }).addTo(map);
+
+            const popupContent = document.createElement('div');
+            popupContent.style.fontFamily = 'sans-serif';
+            popupContent.style.padding = '6px';
+            popupContent.style.minWidth = '240px';
+            popupContent.innerHTML = `
+              <div style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: #7c3aed; margin-bottom: 2px;">
+                🎖️ Iniziativa Sponsorizzata • ${init.comune}
+              </div>
+              <div style="font-weight: bold; font-size: 14px; color: #0f172a; margin-bottom: 4px;">${init.title}</div>
+              <div style="font-size: 11px; color: #475569; margin-bottom: 4px;">Promosso da: <strong>${init.sponsorName}</strong></div>
+              <div style="font-size: 11px; color: #581c87; background: #faf5ff; border: 1px solid #e9d5ff; padding: 5px 7px; border-radius: 6px; margin-bottom: 6px;">
+                ${init.description}
+              </div>
+              <div style="font-size: 11px; color: #7c3aed; font-weight: bold; margin-bottom: 6px;">
+                🎁 Ricompensa: +${init.brikoRewardPerParticipant} BRIKO per ogni partecipante
+              </div>
+              <button id="init-btn-${init.id}" style="background-color: #7c3aed; color: white; border: none; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; cursor: pointer; width: 100%;">Partecipa ed Ottieni BRIKO</button>
+            `;
+
+            marker.bindPopup(popupContent);
+            marker.on('popupopen', () => {
+              const btn = document.getElementById(`init-btn-${init.id}`);
+              if (btn && onOpenSponsor) {
+                btn.onclick = () => onOpenSponsor();
+              }
+            });
+
+            entityMarkersRef.current.push(marker);
+          }
+        } else {
+          // Multiple Sponsors / Initiatives Cluster Marker (Icon + Count Badge)
+          const clusterIcon = L.divIcon({
+            className: 'custom-sponsor-cluster-marker',
+            html: `<div style="background: linear-gradient(135deg, #d97706, #b45309); color: white; padding: 4px 9px; border-radius: 20px; font-size: 13px; font-weight: 800; white-space: nowrap; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.45); border: 2.5px solid white; display: flex; align-items: center; gap: 5px; cursor: pointer;" title="${group.length} Sponsor ed Iniziative vicini">
+              <span style="font-size: 15px;">🏪</span>
+              <span style="background: rgba(255,255,255,0.25); padding: 1px 6px; border-radius: 12px; font-size: 12px; font-weight: 900;">${group.length}</span>
+            </div>`,
+            iconSize: [65, 32],
+            iconAnchor: [32, 16],
+          });
+
+          const marker = L.marker([lat, lng], { icon: clusterIcon }).addTo(map);
+
+          const popupContent = document.createElement('div');
+          popupContent.style.fontFamily = 'sans-serif';
+          popupContent.style.padding = '6px';
+          popupContent.style.minWidth = '240px';
+
+          const itemsHtml = group.map((item) => {
+            const isSpon = item.kind === 'sponsor';
+            const title = isSpon ? item.data.name : item.data.title;
+            const subtitle = isSpon ? item.data.category : `Promosso da: ${item.data.sponsorName}`;
+            const btnId = `spon-cluster-btn-${item.data.id}`;
+            const btnColor = isSpon ? '#d97706' : '#7c3aed';
+            return `
+              <div style="padding: 8px 0; border-bottom: 1px dashed #e2e8f0;">
+                <div style="font-weight: 800; font-size: 13px; color: #0f172a;">${isSpon ? '🏪' : '🎖️'} ${title}</div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${subtitle}</div>
+                <button id="${btnId}" style="background-color: ${btnColor}; color: white; border: none; padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; margin-top: 5px; width: 100%;">Visualizza Dettagli</button>
+              </div>
+            `;
+          }).join('');
+
+          popupContent.innerHTML = `
+            <div style="font-size: 11px; font-weight: 900; color: #d97706; margin-bottom: 6px; text-transform: uppercase;">
+              🏪 ${group.length} Sponsor ed Iniziative in questa zona
+            </div>
+            ${itemsHtml}
+          `;
+
+          marker.bindPopup(popupContent);
+          marker.on('popupopen', () => {
+            group.forEach((item) => {
+              const btnId = `spon-cluster-btn-${item.data.id}`;
+              const btn = document.getElementById(btnId);
+              if (btn && onOpenSponsor) {
+                btn.onclick = () => onOpenSponsor();
+              }
+            });
+          });
+
+          entityMarkersRef.current.push(marker);
+        }
+      });
+    }
+  }, [communities, sponsors, initiatives, showCommunitiesLayer, showSponsorsLayer, userLat, userLng]);
 
   // Focus specific item on customer click
   const handleFocusItem = (item: HelpItem) => {
@@ -464,342 +954,33 @@ export const MapView: React.FC<MapViewProps> = ({
   const staticCount = items.filter((i) => i.trackingType === 'static').length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4 animate-in fade-in duration-300">
-      {/* Top Header Card */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
-            <span>🗺️</span> Mappa Interattiva di Vicinato
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Naviga liberamente sulla mappa: vedi sia annunci dinamici (in movimento con l'autore) sia annunci statici (punti fissi con raggio di influenza).
-          </p>
-        </div>
-        <div className="flex items-center flex-wrap gap-2">
-          <button
-            onClick={handleFitAll}
-            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Inquadra tutti i pin sulla mappa"
-          >
-            <Maximize2 className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Inquadra Tutti</span>
-          </button>
-          <button
-            onClick={handleCenterUser}
-            className="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Centra la mappa sulla tua posizione attuale"
-          >
-            <Crosshair className="w-3.5 h-3.5 text-teal-600" />
-            <span>La Mia Posizione</span>
-          </button>
-          <button
-            onClick={onUpdateLocation}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-bold px-3.5 py-2 rounded-xl transition-all flex items-center space-x-1.5 cursor-pointer"
-            title="Rileva nuovamente le coordinate GPS"
-          >
-            <Navigation className="w-3.5 h-3.5 text-teal-600" />
-            <span>Aggiorna GPS</span>
-          </button>
-          <button
-            onClick={onOpenCreate}
-            className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Pubblica Aiuto</span>
-          </button>
-        </div>
-      </div>
+    <div className="w-full h-[calc(100vh-80px)] min-h-[680px] p-2 sm:p-4 animate-in fade-in duration-300">
+      {/* Map Container - Full Screen & Clean */}
+      <div className="w-full h-full bg-white rounded-3xl border border-gray-200 shadow-md overflow-hidden relative">
+        <div ref={mapContainerRef} className="w-full h-full z-10" />
 
-      {/* Map Filter Control Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          {/* Filter Type & Tracking Pills */}
-          <div className="flex items-center flex-wrap gap-1.5">
-            <span className="text-xs font-bold text-gray-500 mr-1 flex items-center gap-1">
-              <Filter className="w-3.5 h-3.5 text-teal-600" /> Modalità:
-            </span>
+        {/* Top Right Floating Action & Navigation Controls */}
+        <div className="absolute top-4 right-4 z-20 flex flex-col items-end space-y-2">
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setFilterTracking('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                filterTracking === 'all'
-                  ? 'bg-gray-900 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
+              onClick={onOpenCreate}
+              className="bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-lg transition-all flex items-center space-x-1.5 cursor-pointer"
             >
-              Tutti ({items.length})
+              <Plus className="w-3.5 h-3.5" />
+              <span>Pubblica una Gentilezza</span>
             </button>
             <button
-              onClick={() => setFilterTracking('dynamic')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterTracking === 'dynamic'
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200'
-              }`}
-              title="Annunci che seguono la persona via GPS"
+              onClick={onUpdateLocation}
+              className="bg-white/95 backdrop-blur-md hover:bg-gray-100 text-gray-800 border border-gray-200 text-xs font-bold px-3 py-2 rounded-xl shadow-md transition-all flex items-center space-x-1 cursor-pointer"
+              title="Aggiorna Posizione GPS"
             >
-              <Radio className="w-3 h-3 text-current animate-pulse" />
-              <span>In Movimento</span>
-              <span className="opacity-80 text-[10px]">({dynamicCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterTracking('static')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterTracking === 'static'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200'
-              }`}
-              title="Annunci fissati a un indirizzo con raggio di influenza"
-            >
-              <span>📌 Punti Fissi</span>
-              <span className="opacity-80 text-[10px]">({staticCount})</span>
-            </button>
-
-            <span className="text-gray-300 mx-1">|</span>
-
-            <button
-              onClick={() => setFilterType(filterType === 'offer' ? 'all' : 'offer')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'offer'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🤝 Offerte</span>
-              <span className="opacity-80 text-[10px]">({offersCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterType(filterType === 'request' ? 'all' : 'request')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'request'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🆘 Richieste</span>
-              <span className="opacity-80 text-[10px]">({requestsCount})</span>
-            </button>
-            <button
-              onClick={() => setFilterType(filterType === 'free' ? 'all' : 'free')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1 cursor-pointer ${
-                filterType === 'free'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-              }`}
-            >
-              <span>🎁 Gratuiti</span>
-              <span className="opacity-80 text-[10px]">({freeCount})</span>
+              <Navigation className="w-3.5 h-3.5 text-teal-600" />
+              <span>GPS</span>
             </button>
           </div>
 
-          {/* Marker Display and Anti-Overlap Controls */}
-          <div className="flex items-center flex-wrap gap-2 text-xs">
-            {/* View Mode Toggle */}
-            <div className="flex items-center bg-gray-100 p-0.5 rounded-xl border border-gray-200">
-              <button
-                type="button"
-                onClick={() => setMarkerStyle('pill')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  markerStyle === 'pill'
-                    ? 'bg-white text-gray-900 shadow-xs font-bold'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-                title="Mostra cartellini con titolo"
-              >
-                Cartellini
-              </button>
-              <button
-                type="button"
-                onClick={() => setMarkerStyle('compact')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                  markerStyle === 'compact'
-                    ? 'bg-white text-teal-700 shadow-xs font-bold'
-                    : 'text-gray-500 hover:text-gray-900'
-                }`}
-                title="Mostra icone compatte per evitare sovrapposizioni visive"
-              >
-                Icone Compatte
-              </button>
-            </div>
-
-            {/* Anti-Overlap Checkbox */}
-            <button
-              type="button"
-              onClick={() => setAntiOverlap(!antiOverlap)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                antiOverlap
-                  ? 'bg-teal-50 border-teal-200 text-teal-800 font-bold'
-                  : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}
-              title="Separa radialmente gli annunci con coordinate identiche o vicine"
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] text-white ${
-                  antiOverlap ? 'bg-teal-600' : 'bg-gray-300'
-                }`}
-              >
-                {antiOverlap && <Check className="w-2.5 h-2.5" />}
-              </div>
-              <span>Separa vicini</span>
-            </button>
-
-            {/* Action Radius Circles Toggle */}
-            <button
-              type="button"
-              onClick={() => setShowActionCircles(!showActionCircles)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                showActionCircles
-                  ? 'bg-teal-50 border-teal-200 text-teal-800 font-bold'
-                  : 'bg-gray-50 border-gray-200 text-gray-500'
-              }`}
-              title="Mostra i cerchi del raggio di disponibilità impostati dagli autori"
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded flex items-center justify-center text-[10px] text-white ${
-                  showActionCircles ? 'bg-teal-600' : 'bg-gray-300'
-                }`}
-              >
-                {showActionCircles && <Check className="w-2.5 h-2.5" />}
-              </div>
-              <span>Bolle d'Azione</span>
-            </button>
-
-            {/* Only In Action Radius Toggle */}
-            <button
-              type="button"
-              onClick={() => setOnlyInActionRadius(!onlyInActionRadius)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                onlyInActionRadius
-                  ? 'bg-teal-700 border-teal-700 text-white font-bold shadow-xs'
-                  : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
-              }`}
-              title="Mostra solo gli annunci la cui sfera di disponibilità copre la tua posizione GPS"
-            >
-              <Radio className={`w-3.5 h-3.5 ${onlyInActionRadius ? 'text-teal-200 animate-pulse' : 'text-gray-400'}`} />
-              <span>{onlyInActionRadius ? '🎯 Coprono dove sono' : '🌐 Tutti gli annunci'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Second Row: Category & Search Keyword */}
-        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 border-t border-gray-100">
-          {/* Category Dropdown */}
-          <div className="w-full sm:w-64">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full text-xs font-medium bg-gray-50 hover:bg-gray-100 focus:bg-white border border-gray-200 rounded-xl px-3 py-2 text-gray-800 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all cursor-pointer"
-            >
-              <option value="all">📂 Tutte le Categorie ({items.length})</option>
-              {availableCategories.map((cat) => {
-                const count = items.filter((i) => i.category === cat).length;
-                return (
-                  <option key={cat} value={cat}>
-                    {cat} ({count})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          {/* Search Query Input */}
-          <div className="relative w-full sm:flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Cerca per titolo, descrizione o autore..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-xs bg-gray-50 hover:bg-gray-100 focus:bg-white border border-gray-200 rounded-xl pl-9 pr-8 py-2 text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-teal-500 focus:outline-none transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Active Filter Badge and Reset */}
-          {hasActiveFilters && (
-            <div className="flex items-center space-x-2 shrink-0">
-              <span className="text-xs font-semibold text-teal-800 bg-teal-50 px-2.5 py-1.5 rounded-xl border border-teal-100">
-                Mostrati: {positionedItems.length} su {items.length}
-              </span>
-              <button
-                onClick={handleResetFilters}
-                className="text-xs text-rose-600 hover:text-rose-700 hover:underline font-bold px-2 py-1 cursor-pointer"
-              >
-                Azzera Filtri
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Quick Select Carousel for map markers */}
-      {filteredItems.length > 0 ? (
-        <div className="bg-white p-3 rounded-2xl border border-gray-200 shadow-xs flex items-center space-x-2 overflow-x-auto">
-          <span className="text-xs font-bold text-gray-500 shrink-0 ml-1">
-            Visibili sulla mappa ({filteredItems.length}):
-          </span>
-          {filteredItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleFocusItem(item)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border border-gray-200 hover:border-teal-500 bg-gray-50 hover:bg-teal-50 text-xs font-medium text-gray-800 shrink-0 transition-all cursor-pointer"
-              title="Clicca per centrare la mappa su questo annuncio"
-            >
-              <span>{item.type === 'offer' ? '🤝' : '🆘'}</span>
-              <span className="font-bold truncate max-w-[130px]">{item.title}</span>
-              <span className="text-[10px] text-gray-400">({item.userNickname})</span>
-            </button>
-          ))}
-        </div>
-      ) : hasActiveFilters ? (
-        <div className="bg-amber-50 border border-amber-200 p-3 rounded-2xl flex items-center justify-between text-xs text-amber-900">
-          <span>Nessun annuncio corrisponde ai filtri selezionati.</span>
-          <button
-            onClick={handleResetFilters}
-            className="font-bold text-amber-900 hover:underline ml-2 cursor-pointer"
-          >
-            Reimposta tutti i filtri
-          </button>
-        </div>
-      ) : null}
-
-      {/* Followed Entity Indicator */}
-      {followedUserId && (
-        <div className="bg-amber-100 border border-amber-300 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-          <div className="flex items-center space-x-3">
-            <div className="bg-amber-500 text-white p-2 rounded-full">
-              <User className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-bold text-amber-900">Stai seguendo un commerciante/utente</h3>
-              <p className="text-xs text-amber-800">
-                Sulla mappa sono mostrati solo i suoi annunci.
-              </p>
-            </div>
-          </div>
-          {setFollowedUserId && (
-            <button
-              onClick={() => setFollowedUserId(null)}
-              className="bg-white hover:bg-amber-50 text-amber-900 border border-amber-200 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
-            >
-              Rimuovi filtro
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Map Container */}
-      <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden relative">
-        <div ref={mapContainerRef} className="w-full h-[620px] z-10" />
-
-        {/* Custom Map Navigation Controls (Top Right) */}
-        <div className="absolute top-4 right-4 z-20 flex flex-col space-y-2">
+          {/* Navigation Zoom & Location Stack */}
           <div className="bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 shadow-md flex flex-col overflow-hidden">
             <button
               type="button"
@@ -808,72 +989,372 @@ export const MapView: React.FC<MapViewProps> = ({
               title="Ingrandisci (Zoom In)"
               aria-label="Zoom In"
             >
-              <ZoomIn className="w-5 h-5 text-gray-800" />
+              <ZoomIn className="w-4 h-4 text-gray-800" />
             </button>
             <button
               type="button"
               onClick={handleZoomOut}
-              className="p-2.5 hover:bg-gray-100 text-gray-700 active:bg-gray-200 transition-all cursor-pointer"
+              className="p-2.5 hover:bg-gray-100 text-gray-700 active:bg-gray-200 border-b border-gray-200 transition-all cursor-pointer"
               title="Rimpicciolisci (Zoom Out)"
               aria-label="Zoom Out"
             >
-              <ZoomOut className="w-5 h-5 text-gray-800" />
+              <ZoomOut className="w-4 h-4 text-gray-800" />
+            </button>
+            <button
+              type="button"
+              onClick={handleCenterUser}
+              className="p-2.5 hover:bg-teal-50 text-teal-700 border-b border-gray-200 transition-all cursor-pointer"
+              title="Centra sulla mia posizione"
+              aria-label="La mia posizione"
+            >
+              <Crosshair className="w-4 h-4 text-teal-700" />
+            </button>
+            <button
+              type="button"
+              onClick={handleFitAll}
+              className="p-2.5 hover:bg-emerald-50 text-emerald-700 transition-all cursor-pointer"
+              title="Mostra tutti i punti sulla mappa"
+              aria-label="Inquadra tutti"
+            >
+              <Maximize2 className="w-4 h-4 text-emerald-700" />
             </button>
           </div>
-
-          <button
-            type="button"
-            onClick={handleCenterUser}
-            className="p-2.5 bg-white/95 backdrop-blur-md hover:bg-teal-50 text-teal-700 rounded-xl border border-gray-200 shadow-md transition-all cursor-pointer"
-            title="Centra su di me"
-            aria-label="La mia posizione"
-          >
-            <Crosshair className="w-5 h-5 text-teal-700" />
-          </button>
-
-          <button
-            type="button"
-            onClick={handleFitAll}
-            className="p-2.5 bg-white/95 backdrop-blur-md hover:bg-emerald-50 text-emerald-700 rounded-xl border border-gray-200 shadow-md transition-all cursor-pointer"
-            title="Mostra tutti i punti"
-            aria-label="Mostra tutti i punti"
-          >
-            <Maximize2 className="w-5 h-5 text-emerald-700" />
-          </button>
         </div>
 
-        {/* Map Legend (Bottom Left) */}
-        <div className="absolute bottom-6 left-6 z-20 bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-lg space-y-2 text-xs max-w-xs">
-          <div className="font-bold text-gray-900 mb-1 flex items-center justify-between">
-            <span>Legenda Mappa</span>
-            <span className="text-[10px] text-gray-400 font-normal">Zoom: {currentZoom}</span>
+        {/* Followed User Indicator Badge (Top Left) */}
+        {followedUserId && (
+          <div className="absolute top-4 left-4 z-20 bg-amber-100/95 backdrop-blur-md border border-amber-300 rounded-2xl px-3.5 py-2 flex items-center space-x-2 shadow-lg text-xs">
+            <User className="w-4 h-4 text-amber-700" />
+            <span className="font-bold text-amber-900">Mappa seguendo un utente</span>
+            {setFollowedUserId && (
+              <button
+                onClick={() => setFollowedUserId(null)}
+                className="ml-2 font-bold text-amber-800 hover:underline cursor-pointer"
+              >
+                Rimuovi
+              </button>
+            )}
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-teal-600 inline-block"></span>
-            <span className="text-gray-700">Offerte ({positionedItems.filter((p) => p.item.type === 'offer').length})</span>
+        )}
+
+        {/* Map Legend & Integrated Filters Card (Bottom Right) */}
+        {!isLegendOpen ? (
+          <div className="absolute bottom-4 right-4 z-20">
+            <button
+              onClick={() => setIsLegendOpen(true)}
+              className="bg-white/95 backdrop-blur-md hover:bg-teal-50 text-teal-900 border border-gray-200/90 px-3.5 py-2.5 rounded-2xl shadow-xl flex items-center space-x-2 font-black text-xs transition-all active:scale-95 cursor-pointer"
+              title="Apri Legenda e Filtri Mappa"
+            >
+              <span>🗺️ Legenda Mappa</span>
+              {hasActiveFilters && (
+                <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse"></span>
+              )}
+              <ChevronUp className="w-4 h-4 text-teal-600" />
+            </button>
           </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-blue-600 inline-block"></span>
-            <span className="text-gray-700">Richieste ({positionedItems.filter((p) => p.item.type === 'request').length})</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs">📌</span>
-            <span className="text-amber-800 font-medium">Punti Fissi (Area 0-10 km)</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs">🏃</span>
-            <span className="text-teal-800 font-medium">Dinamici (100m fissi GPS)</span>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block"></span>
-            <span className="text-gray-700">La tua posizione GPS</span>
-          </div>
-          {antiOverlap && (
-            <div className="pt-1 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-medium">
-              <span>✨ Anti-sovrapposizione attiva</span>
+        ) : (
+          <div className="absolute bottom-4 right-4 z-20 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl border border-gray-200/90 shadow-xl space-y-2.5 text-xs w-72 sm:w-80 transition-all max-h-[85vh] overflow-y-auto animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {/* Header with Close/Minimize Icon */}
+            <div className="font-bold text-gray-900 flex items-center justify-between border-b border-gray-100 pb-2">
+              <span className="text-sm font-black flex items-center gap-1.5 text-gray-900">
+                <span>🗺️</span> Legenda Mappa
+              </span>
+              <div className="flex items-center space-x-1.5">
+                <span className="text-[10px] text-gray-400 font-semibold bg-gray-100 px-2 py-0.5 rounded-full">
+                  Zoom: {currentZoom}
+                </span>
+                <button
+                  onClick={() => setIsLegendOpen(false)}
+                  className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                  title="Riduci a icona"
+                >
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* Integrated Dropdown Filters inside Legenda Card */}
+            <div className="space-y-2 bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/90">
+              <div className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                <span>🔍 Filtra Mappa:</span>
+                {hasActiveFilters && (
+                  <button
+                    onClick={handleResetFilters}
+                    className="text-[10px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+                  >
+                    Azzera
+                  </button>
+                )}
+              </div>
+
+              {/* Tipo Annuncio Dropdown */}
+              <div>
+                <select
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value as any)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">Tutte le Gentilezze ({items.length})</option>
+                  <option value="offer">🤝 Solo Offerte ({offersCount})</option>
+                  <option value="request">🆘 Solo Richieste ({requestsCount})</option>
+                  <option value="free">🎁 Solo Gratuiti ({freeCount})</option>
+                </select>
+              </div>
+
+              {/* Categoria Dropdown */}
+              <div>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">📂 Tutte le Categorie ({items.length})</option>
+                  {availableCategories.map((cat) => {
+                    const count = items.filter((i) => i.category === cat).length;
+                    return (
+                      <option key={cat} value={cat}>
+                        {cat} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* Modalità Tracking Dropdown */}
+              <div>
+                <select
+                  value={filterTracking}
+                  onChange={(e) => setFilterTracking(e.target.value as any)}
+                  className="w-full text-xs font-bold bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">🌐 Tutti i Tipi (Dinamici + Fissi)</option>
+                  <option value="dynamic">🏃 Solo Dinamici GPS ({dynamicCount})</option>
+                  <option value="static">📌 Solo Punti Fissi ({staticCount})</option>
+                </select>
+              </div>
+
+              {/* Toggles */}
+              <div className="pt-1 space-y-1.5 text-[11px] border-t border-slate-200/60 pt-2">
+                <div className="font-bold text-slate-800 text-[11px] mb-1">Livelli Mappa:</div>
+                <label className="flex items-center justify-between font-bold text-teal-800 cursor-pointer bg-teal-50/60 p-1.5 rounded-lg border border-teal-200/60">
+                  <span className="flex items-center gap-1.5">
+                    <span>🏛️</span> Comunità Civiche ({communities.filter(c => !isCommunityExpired(c)).length})
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={showCommunitiesLayer}
+                    onChange={(e) => setShowCommunitiesLayer(e.target.checked)}
+                    className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between font-bold text-amber-800 cursor-pointer bg-amber-50/60 p-1.5 rounded-lg border border-amber-200/60">
+                  <span className="flex items-center gap-1.5">
+                    <span>🏪</span> Sponsor & Iniziative ({sponsors.length + initiatives.length})
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={showSponsorsLayer}
+                    onChange={(e) => setShowSponsorsLayer(e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </label>
+                <label className="flex items-center justify-between font-bold text-indigo-800 cursor-pointer bg-indigo-50/60 p-1.5 rounded-lg border border-indigo-200/60">
+                  <span className="flex items-center gap-1.5">
+                    <span>🤝</span> Gentilezze & Aiuti ({items.length})
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={showItemsLayer}
+                    onChange={(e) => setShowItemsLayer(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 cursor-pointer"
+                  />
+                </label>
+
+                <div className="pt-1 space-y-1">
+                  <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                    <span>🔗 Raggruppa 100m</span>
+                    <input
+                      type="checkbox"
+                      checked={antiOverlap}
+                      onChange={(e) => setAntiOverlap(e.target.checked)}
+                      className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between font-bold text-slate-700 cursor-pointer">
+                    <span>⭕ Cerchi d'influenza</span>
+                    <input
+                      type="checkbox"
+                      checked={showActionCircles}
+                      onChange={(e) => setShowActionCircles(e.target.checked)}
+                      className="rounded text-teal-600 focus:ring-teal-500 h-3.5 w-3.5 cursor-pointer"
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* Legend Items */}
+            <div className="space-y-1.5 pt-1 text-xs">
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-teal-600 inline-block shrink-0"></span>
+                <span className="text-gray-800">Offerte ({filteredItems.filter((i) => i.type === 'offer').length})</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-blue-600 inline-block shrink-0"></span>
+                <span className="text-gray-800">Richieste ({filteredItems.filter((i) => i.type === 'request').length})</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs shrink-0">📌</span>
+                <span className="text-amber-800">Punti Fissi (Area 0-10 km)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs shrink-0">🏃</span>
+                <span className="text-teal-800">Dinamici (100m fissi GPS)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="text-xs font-bold text-indigo-700 shrink-0">🔗</span>
+                <span className="text-indigo-900">Gruppi (Raggio &lt;100m)</span>
+              </div>
+              <div className="flex items-center space-x-2 font-medium">
+                <span className="w-3 h-3 rounded-full bg-teal-800 border border-white inline-block shrink-0"></span>
+                <span className="text-gray-800">La tua posizione GPS</span>
+              </div>
+              {antiOverlap && (
+                <div className="pt-1.5 border-t border-gray-100 text-[10px] text-teal-700 flex items-center gap-1 font-extrabold">
+                  <span>✨ Raggruppamento 100m attivo</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Cluster Expansion Modal Overlay */}
+        {activeClusterModal && (
+          <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-100 flex flex-col max-h-[85vh]">
+              {/* Modal Top Banner */}
+              <div className="bg-gradient-to-r from-indigo-600 to-purple-600 p-4 text-white flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black">
+                    🔗
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base">Gruppo di Gentilezze (Raggio 100m)</h3>
+                    <p className="text-xs text-indigo-100">
+                      Mostrate {filteredClusterItems.length} di {activeClusterModal.length} gentilezze nel gruppo
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveClusterModal(null)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Dropdown Filters Bar */}
+              <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center space-x-1.5">
+                  <span className="font-bold text-slate-700">Tipo:</span>
+                  <select
+                    value={modalFilterType}
+                    onChange={(e) => setModalFilterType(e.target.value as any)}
+                    className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                  >
+                    <option value="all">Tutti ({activeClusterModal.length})</option>
+                    <option value="offer">🤝 Disponibilità ({activeClusterModal.filter(i => i.type === 'offer').length})</option>
+                    <option value="request">🆘 Richieste ({activeClusterModal.filter(i => i.type === 'request').length})</option>
+                  </select>
+                </div>
+
+                {clusterCategories.length > 1 && (
+                  <div className="flex items-center space-x-1.5">
+                    <span className="font-bold text-slate-700">Categoria:</span>
+                    <select
+                      value={modalSelectedCategory}
+                      onChange={(e) => setModalSelectedCategory(e.target.value)}
+                      className="bg-white border border-slate-300 rounded-lg px-2.5 py-1 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">Tutte le Categorie ({activeClusterModal.length})</option>
+                      {clusterCategories.map((cat) => {
+                        const count = activeClusterModal.filter((i) => i.category === cat).length;
+                        return (
+                          <option key={cat} value={cat}>
+                            {getCategorySymbol(cat)} {cat} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Items List */}
+              <div className="p-4 overflow-y-auto space-y-2.5 flex-1">
+                {filteredClusterItems.length > 0 ? (
+                  filteredClusterItems.map((item) => {
+                    const isOffer = item.type === 'offer';
+                    const symbol = getCategorySymbol(item.category);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          setActiveClusterModal(null);
+                          onSelectItem(item);
+                        }}
+                        className="p-3.5 rounded-xl border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40 transition-all cursor-pointer flex items-center justify-between group shadow-2xs"
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg shadow-2xs shrink-0 ${
+                            isOffer ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {symbol}
+                          </div>
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
+                                isOffer ? 'bg-rose-100 text-rose-800' : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {isOffer ? 'Disponibilità' : 'Richiesta'}
+                              </span>
+                              <span className="text-xs text-slate-500 font-medium">{item.category}</span>
+                            </div>
+                            <h4 className="font-bold text-sm text-slate-900 group-hover:text-indigo-700 transition-colors mt-0.5">
+                              {item.title}
+                            </h4>
+                            <p className="text-xs text-slate-600 mt-0.5">Da: {item.userNickname} {item.distanceKm !== undefined ? `• ${Math.round(item.distanceKm * 1000)}m` : ''}</p>
+                          </div>
+                        </div>
+
+                        <div className="px-3 py-1.5 rounded-lg bg-indigo-600 group-hover:bg-indigo-700 text-white font-bold text-xs shadow-2xs shrink-0 transition-colors">
+                          Apri →
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center text-slate-500">
+                    <p className="font-semibold text-sm">Nessuna gentilezza corrisponde ai filtri selezionati nel gruppo.</p>
+                    <button
+                      onClick={() => {
+                        setModalFilterType('all');
+                        setModalSelectedCategory('all');
+                      }}
+                      className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
+                    >
+                      Mostra tutte le gentilezze del gruppo
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-slate-50 border-t border-slate-200 text-center text-xs text-slate-500 font-medium">
+                Clicca su una gentilezza per aprirne i dettagli e contattare l'utente.
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

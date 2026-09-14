@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2, Compass, Radio, Building2, Navigation, Check, Search, LocateFixed } from 'lucide-react';
-import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES } from '../types';
+import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES, Community } from '../types';
 import { searchComuni, resolveAddressGeocode, ComuneItem } from '../services/comuniService';
 
 interface CreateHelpModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: UserProfile | null;
+  communities?: Community[]; // Added communities to allow selection
   onSave: (item: {
     type: HelpType;
     title: string;
@@ -16,6 +17,9 @@ interface CreateHelpModalProps {
     isFree: boolean;
     trackingType: 'dynamic' | 'static';
     actionRadiusKm: number;
+    durationMinutes: number;
+    valoreGentilezzaBriko: number;
+    targetCommunityIds?: string[];
     staticLocation?: {
       comune: string;
       via?: string;
@@ -34,6 +38,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   isOpen,
   onClose,
   user,
+  communities = [],
   onSave,
   onOpenProfile,
 }) => {
@@ -46,6 +51,8 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   const [isFree, setIsFree] = useState<boolean>(true);
   const [actionRadiusKm, setActionRadiusKm] = useState<number>(0.1); // 100 metri fissa per annunci dinamici
   const [durationMinutes, setDurationMinutes] = useState<number>(24 * 60);
+  const [valoreGentilezzaBriko, setValoreGentilezzaBriko] = useState<number>(10);
+  const [targetCommunityIds, setTargetCommunityIds] = useState<string[]>([]);
 
   // Static location states (Comune, Via, Civico)
   const [staticComune, setStaticComune] = useState(() => {
@@ -291,6 +298,8 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       trackingType,
       actionRadiusKm,
       durationMinutes,
+      valoreGentilezzaBriko: Number(valoreGentilezzaBriko),
+      targetCommunityIds: targetCommunityIds.length > 0 ? targetCommunityIds : undefined,
       staticLocation: trackingType === 'static' ? {
         comune: staticComune.trim(),
         via: staticVia.trim(),
@@ -860,6 +869,85 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Valore Gentilezza BRIKO */}
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-bold text-amber-950 uppercase tracking-wider">
+                  Valore della Gentilezza (BRIKO)
+                </label>
+                <p className="text-[10px] text-amber-800">
+                  Definisci il valore di questa azione (da 0 a 100 BRIKO). Il valore sarà effettivo se accettato.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-lg border border-amber-300">
+                <span className="text-sm font-black text-amber-700">{valoreGentilezzaBriko}</span>
+                <span className="text-xs">🧱</span>
+              </div>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={valoreGentilezzaBriko}
+              onChange={(e) => setValoreGentilezzaBriko(Number(e.target.value))}
+              className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+            />
+            <div className="flex justify-between text-[10px] text-amber-800 font-bold">
+              <span>0 (Dono)</span>
+              <span>25</span>
+              <span>50</span>
+              <span>75</span>
+              <span>100 (Max)</span>
+            </div>
+          </div>
+
+          {/* Visibilità / Target Communities */}
+          <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Visibilità dell'Annuncio
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setTargetCommunityIds([])}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  targetCommunityIds.length === 0
+                    ? 'bg-emerald-700 text-white border-emerald-700'
+                    : 'bg-white text-slate-600 border-slate-200'
+                }`}
+              >
+                🌍 Aperto a Tutti
+              </button>
+              {user && communities.filter(c => user.communityIds?.includes(c.id)).map(comm => (
+                <button
+                  key={comm.id}
+                  type="button"
+                  onClick={() => {
+                    if (targetCommunityIds.includes(comm.id)) {
+                      setTargetCommunityIds(prev => prev.filter(id => id !== comm.id));
+                    } else {
+                      setTargetCommunityIds(prev => [...prev, comm.id]);
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    targetCommunityIds.includes(comm.id)
+                      ? 'bg-teal-700 text-white border-teal-700'
+                      : 'bg-white text-slate-600 border-slate-200'
+                  }`}
+                >
+                  🏛️ {comm.name.split(' ').slice(0, 2).join(' ')}...
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-500">
+              {targetCommunityIds.length === 0 
+                ? "L'annuncio sarà visibile a chiunque si trovi nel raggio d'azione."
+                : `L'annuncio sarà visibile solo ai membri delle comunità selezionate (${targetCommunityIds.length}).`}
+            </p>
           </div>
 
           {/* Submit */}

@@ -287,7 +287,14 @@ export default function App() {
 
     const validItems = Array.from(uniqueMap.values()).filter((item) => {
       const durationMs = (item.durationMinutes || 24 * 60) * 60 * 1000;
-      return (now - item.createdAt) <= durationMs;
+      const isNotExpired = (now - item.createdAt) <= durationMs;
+      
+      // Community Visibility Filtering:
+      // If item has targetCommunityIds, only show if currentUser is in at least one of them or is the creator
+      const isVisibleToUser = !currentUser || item.userId === currentUser.id || !item.targetCommunityIds || item.targetCommunityIds.length === 0 || 
+        (currentUser.communityIds && item.targetCommunityIds.some(id => currentUser.communityIds?.includes(id)));
+        
+      return isNotExpired && isVisibleToUser;
     });
 
     return validItems.map((item) => {
@@ -585,6 +592,10 @@ export default function App() {
     trackingType?: 'dynamic' | 'static';
     actionRadiusKm?: number;
     durationMinutes?: number;
+    valoreGentilezzaBriko?: number;
+    targetCommunityIds?: string[];
+    sponsorId?: string;
+    sponsorName?: string;
     staticLocation?: {
       comune: string;
       via?: string;
@@ -617,7 +628,7 @@ export default function App() {
       ? Math.min(10, Math.max(0.1, Number(newHelpData.actionRadiusKm) || 1))
       : 0.1;
 
-    const newItemData = {
+    const newItemData: HelpItem = {
       id: newId,
       userId: user.id,
       userNickname: user.nickname,
@@ -636,6 +647,10 @@ export default function App() {
       customCoords: trackingType === 'static' ? (newHelpData.customCoords || itemLocation) : undefined,
       actionRadiusKm: effectiveRadius,
       durationMinutes: newHelpData.durationMinutes || 24 * 60,
+      valoreGentilezzaBriko: newHelpData.valoreGentilezzaBriko || 10,
+      targetCommunityIds: newHelpData.targetCommunityIds,
+      sponsorId: newHelpData.sponsorId,
+      sponsorName: newHelpData.sponsorName,
       creditsRequired: newHelpData.creditsRequired,
       isFree: newHelpData.isFree,
       status: 'active' as const,
@@ -820,6 +835,8 @@ export default function App() {
             initiatives={initiatives}
             setInitiatives={setInitiatives}
             onSaveProfile={handleSaveProfile} 
+            onCreateHelp={handleCreateHelp}
+            communities={communities}
           />
         )}
       </main>
@@ -837,6 +854,7 @@ export default function App() {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         user={user}
+        communities={communities}
         onSave={handleCreateHelp}
         onOpenProfile={() => setIsProfileOpen(true)}
       />

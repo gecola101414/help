@@ -76,6 +76,19 @@ export interface Community {
   };
 }
 
+export interface CommunityInitiative {
+  id: string;
+  communityId: string;
+  title: string;
+  description: string;
+  organizerId: string;
+  organizerNickname: string;
+  dateStr: string;
+  locationStr: string;
+  participants: string[];
+  createdAt: number;
+}
+
 // Helper to check if a community has expired (30 days without reaching 10 members)
 export function isCommunityExpired(community: Community): boolean {
   if (!community || !community.createdAt) return false;
@@ -129,6 +142,10 @@ export interface HelpItem {
   };
   actionRadiusKm?: number; // Raggio d'azione/influenza (entro cui bisogna passare/trovarsi per visualizzarlo)
   durationMinutes?: number; // Durata dell'annuncio (da 10 min a 24 ore)
+  valoreGentilezzaBriko?: number; // Valore della gentilezza (0 - 100 BRIKO) stabilito da chi la offre/richiede
+  targetCommunityIds?: string[]; // Se la gentilezza è aperta a tutti ([]/undefined) o dedicata a specifiche comunità civiche dell'utente
+  sponsorId?: string; // Se è una richiesta/iniziativa creata o sostenuta da uno Sponsor con montepremi BRIKO
+  sponsorName?: string;
   creditsRequired: number; // 0 for free, >0 if needs credits
   isFree: boolean;
   status: 'active' | 'in_progress' | 'completed' | 'cancelled';

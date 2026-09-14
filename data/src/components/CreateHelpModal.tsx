@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Sparkles, HeartHandshake, HelpCircle, Coins, MapPin, Loader2, Compass, Radio, Building2, Navigation, Check, Search, LocateFixed } from 'lucide-react';
-import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES } from '../types';
+import { UserProfile, HelpType, DEFAULT_HELP_CATEGORIES, Community } from '../types';
+import { searchComuni, resolveAddressGeocode, ComuneItem } from '../services/comuniService';
 
 interface CreateHelpModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: UserProfile | null;
+  communities?: Community[]; // Added communities to allow selection
   onSave: (item: {
     type: HelpType;
     title: string;
@@ -15,6 +17,9 @@ interface CreateHelpModalProps {
     isFree: boolean;
     trackingType: 'dynamic' | 'static';
     actionRadiusKm: number;
+    durationMinutes: number;
+    valoreGentilezzaBriko: number;
+    targetCommunityIds?: string[];
     staticLocation?: {
       comune: string;
       via?: string;
@@ -33,6 +38,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   isOpen,
   onClose,
   user,
+  communities = [],
   onSave,
   onOpenProfile,
 }) => {
@@ -45,6 +51,8 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
   const [isFree, setIsFree] = useState<boolean>(true);
   const [actionRadiusKm, setActionRadiusKm] = useState<number>(0.1); // 100 metri fissa per annunci dinamici
   const [durationMinutes, setDurationMinutes] = useState<number>(24 * 60);
+  const [valoreGentilezzaBriko, setValoreGentilezzaBriko] = useState<number>(10);
+  const [targetCommunityIds, setTargetCommunityIds] = useState<string[]>([]);
 
   // Static location states (Comune, Via, Civico)
   const [staticComune, setStaticComune] = useState(() => {
@@ -62,39 +70,108 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
     message: '',
   });
 
+  // Italian Comuni Autocomplete states
+  const [comuneSuggestions, setComuneSuggestions] = useState<ComuneItem[]>([]);
+  const [isSearchingComuni, setIsSearchingComuni] = useState(false);
+  const [showComuneDropdown, setShowComuneDropdown] = useState(false);
+  const comuneDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (comuneDropdownRef.current && !comuneDropdownRef.current.contains(e.target as Node)) {
+        setShowComuneDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Live search for comuni as the user types (client-side 0ms cache + static fallback for Vercel)
+  useEffect(() => {
+    if (!staticComune || staticComune.trim().length < 1) {
+      setComuneSuggestions([]);
+      setShowComuneDropdown(false);
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      try {
+        setIsSearchingComuni(true);
+        const list = await searchComuni(staticComune.trim(), 30);
+        if (isMounted) {
+          setComuneSuggestions(list);
+          setShowComuneDropdown(list.length > 0);
+        }
+      } catch (err) {
+        console.warn('Error querying comuni', err);
+      } finally {
+        if (isMounted) setIsSearchingComuni(false);
+      }
+    }, 60);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [staticComune]);
+
+  const handleSelectComune = (c: ComuneItem) => {
+    setStaticComune(c.nome);
+    setStaticCoords({ lat: c.lat, lng: c.lng });
+    setStaticFormattedAddress(`${c.nome} (${c.sigla})`);
+    setShowComuneDropdown(false);
+    setGeocodeFeedback({
+      status: 'success',
+      message: `Centro del comune selezionato: ${c.nome} (${c.sigla}), ${c.regione} (Lat: ${c.lat.toFixed(4)}, Lng: ${c.lng.toFixed(4)})`,
+    });
+  };
+
   const [aiPrompt, setAiPrompt] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleGeocodeAddress = async () => {
     if (!staticComune.trim()) {
-      setGeocodeFeedback({ status: 'error', message: 'Inserisci almeno il Comune.' });
+      setGeocodeFeedback({ status: 'error', message: 'Seleziona o scrivi prima il Comune.' });
       return;
     }
     setIsGeocoding(true);
     setGeocodeFeedback({ status: 'idle', message: '' });
     try {
-      const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
-      const data = await res.json();
+      const data = await resolveAddressGeocode(staticComune, staticVia, staticCivico);
       if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
         setStaticCoords({ lat: data.lat, lng: data.lng });
         const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
         setStaticFormattedAddress(pretty || data.displayName);
-        setGeocodeFeedback({
-          status: 'success',
-          message: `Localizzato: ${pretty || data.displayName} (${data.lat.toFixed(4)}, ${data.lng.toFixed(4)})`,
-        });
+
+        if (data.isStreetLevel) {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `📍 Via e numero civico identificati con precisione: ${pretty}`,
+          });
+        } else if (data.isComuneCenter) {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `🏛️ Via non trovata sulla mappa: annuncio posizionato con certezza nel centro di ${staticComune}`,
+          });
+        } else {
+          setGeocodeFeedback({
+            status: 'success',
+            message: `📍 Posizionato: ${data.displayName}`,
+          });
+        }
       } else {
         setGeocodeFeedback({
           status: 'error',
-          message: 'Indirizzo non trovato con precisione. Verranno usate le coordinate approssimative.',
+          message: 'Impossibile identificare le coordinate.',
         });
       }
     } catch {
       setGeocodeFeedback({
         status: 'error',
-        message: 'Impossibile verificare l’indirizzo al momento.',
+        message: 'Errore durante la verifica dell’indirizzo.',
       });
     } finally {
       setIsGeocoding(false);
@@ -187,20 +264,19 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
 
     if (trackingType === 'static') {
       if (!staticComune.trim()) {
-        setError('Specifica almeno il Comune per l’annuncio statico.');
+        setError('Specifica o seleziona almeno il Comune per l’annuncio statico.');
         return;
       }
-      if (!finalCoords) {
+      if (!finalCoords || staticVia.trim()) {
         try {
-          const fullQuery = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(' ');
-          const res = await fetch(`/api/geocode?q=${encodeURIComponent(fullQuery)}`);
-          const data = await res.json();
+          const data = await resolveAddressGeocode(staticComune, staticVia, staticCivico);
           if (data && typeof data.lat === 'number' && typeof data.lng === 'number') {
             finalCoords = { lat: data.lat, lng: data.lng };
-            formattedAddr = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+            const pretty = [staticVia.trim(), staticCivico.trim(), staticComune.trim()].filter(Boolean).join(', ');
+            formattedAddr = pretty || data.displayName;
           }
         } catch {
-          finalCoords = user?.location ? { lat: user.location.lat, lng: user.location.lng } : { lat: 45.4642, lng: 9.1900 };
+          // If error, retain staticCoords if set
         }
       }
 
@@ -222,13 +298,15 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
       trackingType,
       actionRadiusKm,
       durationMinutes,
+      valoreGentilezzaBriko: Number(valoreGentilezzaBriko),
+      targetCommunityIds: targetCommunityIds.length > 0 ? targetCommunityIds : undefined,
       staticLocation: trackingType === 'static' ? {
         comune: staticComune.trim(),
-        via: staticVia.trim() || undefined,
-        civico: staticCivico.trim() || undefined,
-        formattedAddress: formattedAddr,
+        via: staticVia.trim(),
+        civico: staticCivico.trim(),
+        formattedAddress: formattedAddr || staticComune.trim(),
       } : undefined,
-      customCoords: trackingType === 'static' ? (finalCoords || undefined) : undefined,
+      customCoords: trackingType === 'static' ? (finalCoords || { lat: 45.6800, lng: 8.7075 }) : undefined,
     });
     onClose();
   };
@@ -240,10 +318,10 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
         {/* Header */}
         <div className="bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold">Pubblica su HELP</h2>
-            <p className="text-xs text-emerald-100 mt-1">Condividi un aiuto o esponi la tua esigenza</p>
+            <h2 className="text-xl font-bold">Pubblica su GEOKIND</h2>
+            <p className="text-xs text-emerald-100 mt-1">Pubblica una gentilezza o poni una richiesta alla community</p>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors">
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-white transition-colors cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -268,7 +346,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               }`}
             >
               <HeartHandshake className="w-4 h-4" />
-              <span>Offro Aiuto (Metto a disp.)</span>
+              <span>Offro una Gentilezza</span>
             </button>
             <button
               type="button"
@@ -280,7 +358,7 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
               }`}
             >
               <HelpCircle className="w-4 h-4" />
-              <span>Ho Bisogno di Aiuto</span>
+              <span>Chiedo una Gentilezza</span>
             </button>
           </div>
 
@@ -351,79 +429,171 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      Comune *
-                    </label>
-                    <input
-                      type="text"
-                      value={staticComune}
-                      onChange={(e) => {
-                        setStaticComune(e.target.value);
-                        setStaticCoords(null);
-                      }}
-                      placeholder="es. Roma, Milano..."
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
-                      required
-                    />
-                  </div>
+                {/* Full-width Comune Search & Selection */}
+                <div className="space-y-3">
+                  <div className="relative" ref={comuneDropdownRef}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Comune d'Italia *</span>
+                        <span className="text-[10px] font-normal text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full">
+                          Tutti i 7.904 comuni inclusi
+                        </span>
+                      </label>
+                      {isSearchingComuni && (
+                        <div className="flex items-center gap-1 text-[11px] text-amber-800 font-medium">
+                          <Loader2 className="w-3 h-3 animate-spin text-amber-700" />
+                          <span>Ricerca...</span>
+                        </div>
+                      )}
+                    </div>
 
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      Via / Piazza
-                    </label>
-                    <input
-                      type="text"
-                      value={staticVia}
-                      onChange={(e) => {
-                        setStaticVia(e.target.value);
-                        setStaticCoords(null);
-                      }}
-                      placeholder="es. Via Garibaldi"
-                      className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-1">
-                    <label className="block text-[10px] font-bold uppercase text-amber-900 mb-1">
-                      N. Civico (opzionale)
-                    </label>
-                    <div className="flex space-x-1">
+                    <div className="relative">
                       <input
                         type="text"
-                        value={staticCivico}
+                        value={staticComune}
+                        onFocus={() => {
+                          if (comuneSuggestions.length > 0) setShowComuneDropdown(true);
+                        }}
                         onChange={(e) => {
-                          setStaticCivico(e.target.value);
+                          setStaticComune(e.target.value);
                           setStaticCoords(null);
                         }}
-                        placeholder="es. 12"
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                        placeholder="Inizia a digitare il comune (es. Somma Lombardo, Gallarate, Roma, Milano...)"
+                        className="w-full px-3.5 py-2.5 text-sm rounded-xl border-2 border-amber-300/90 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-semibold text-slate-900 shadow-xs placeholder:text-slate-400 placeholder:font-normal"
+                        required
+                        autoComplete="off"
                       />
-                      <button
-                        type="button"
-                        onClick={handleGeocodeAddress}
-                        disabled={isGeocoding || !staticComune.trim()}
-                        title="Verifica coordinate indirizzo"
-                        className="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-2 rounded-lg text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        {isGeocoding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                      </button>
+                      {staticComune && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStaticComune('');
+                            setStaticCoords(null);
+                            setComuneSuggestions([]);
+                            setShowComuneDropdown(false);
+                          }}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 text-xs cursor-pointer"
+                          title="Cancella comune"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Autocomplete Dropdown with Italian Municipalities - WIDE & HIGH CONTRAST */}
+                    {showComuneDropdown && comuneSuggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 z-50 mt-1.5 max-h-72 overflow-y-auto bg-white border-2 border-amber-400 rounded-2xl shadow-2xl divide-y divide-slate-100 ring-1 ring-black/10">
+                        <div className="p-2 bg-amber-50/80 text-[11px] font-bold text-amber-900 flex items-center justify-between border-b border-amber-100">
+                          <span>Seleziona il tuo comune per coordinate garantite:</span>
+                          <span className="font-mono text-amber-700">{comuneSuggestions.length} risultati</span>
+                        </div>
+                        {comuneSuggestions.map((c) => (
+                          <button
+                            type="button"
+                            key={`${c.nome}-${c.sigla}-${c.cap}-${c.lat}`}
+                            onClick={() => handleSelectComune(c)}
+                            className="w-full text-left px-4 py-3 hover:bg-amber-100/60 focus:bg-amber-100/70 flex items-center justify-between gap-3 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold text-sm shrink-0 border border-amber-300 shadow-2xs">
+                                {c.sigla}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-sm font-bold text-slate-950">{c.nome}</span>
+                                  <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                                    {c.provincia ? `Prov. ${c.provincia}` : c.sigla}
+                                  </span>
+                                  {c.cap && (
+                                    <span className="text-xs text-slate-500 font-mono">
+                                      CAP {c.cap}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-xs text-amber-800 font-medium block mt-0.5">
+                                  Regione {c.regione}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-100 text-emerald-900 px-2.5 py-1 rounded-lg font-bold border border-emerald-200">
+                                <Check className="w-3 h-3 text-emerald-700" />
+                                Centro Comune
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Via e Civico in dedicated comfortable row */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 mb-1">
+                        Via / Piazza (a mano)
+                      </label>
+                      <input
+                        type="text"
+                        value={staticVia}
+                        onChange={(e) => {
+                          setStaticVia(e.target.value);
+                          setStaticCoords(null);
+                        }}
+                        placeholder="es. Via Milano, Corso Garibaldi..."
+                        className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800 shadow-xs"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-amber-950 mb-1">
+                        N. Civico (a mano)
+                      </label>
+                      <div className="flex space-x-1.5">
+                        <input
+                          type="text"
+                          value={staticCivico}
+                          onChange={(e) => {
+                            setStaticCivico(e.target.value);
+                            setStaticCoords(null);
+                          }}
+                          placeholder="es. 96"
+                          className="w-full px-3 py-2.5 text-xs rounded-xl border border-amber-300 bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-medium text-slate-800 shadow-xs text-center"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleGeocodeAddress}
+                          disabled={isGeocoding || !staticComune.trim()}
+                          title="Verifica coordinate indirizzo o individua il centro del comune"
+                          className="bg-amber-600 hover:bg-amber-700 text-white px-3 py-2.5 rounded-xl text-xs font-bold shrink-0 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1 shadow-xs"
+                        >
+                          {isGeocoding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                          <span className="hidden sm:inline">Verifica</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Geocode result feedback */}
-                {geocodeFeedback.message && (
-                  <div className={`text-[11px] p-2 rounded-lg flex items-center space-x-1.5 ${
-                    geocodeFeedback.status === 'success'
-                      ? 'bg-emerald-100 text-emerald-900 border border-emerald-200'
-                      : 'bg-red-100 text-red-900 border border-red-200'
-                  }`}>
-                    {geocodeFeedback.status === 'success' && <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />}
-                    <span>{geocodeFeedback.message}</span>
+                  <div className="text-[11px] text-amber-900 bg-amber-100/80 p-3 rounded-xl flex items-start gap-2.5 border border-amber-200">
+                    <Building2 className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
+                    <div className="leading-relaxed">
+                      <strong>Affidabilità garantita:</strong> il comune viene selezionato dalla lista ufficiale dei 7.904 comuni italiani. Via e civico li inserisci a mano: se la via non viene identificata dalla mappa, l'annuncio verrà posizionato con certezza nel <strong>centro del comune</strong>.
+                    </div>
                   </div>
-                )}
+
+                  {/* Geocode result feedback */}
+                  {geocodeFeedback.message && (
+                    <div className={`text-xs p-3 rounded-xl flex items-center space-x-2 ${
+                      geocodeFeedback.status === 'success'
+                        ? 'bg-emerald-100 text-emerald-950 border border-emerald-300 font-medium'
+                        : 'bg-red-100 text-red-950 border border-red-300 font-medium'
+                    }`}>
+                      {geocodeFeedback.status === 'success' && <Check className="w-4 h-4 text-emerald-700 shrink-0" />}
+                      <span>{geocodeFeedback.message}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -627,12 +797,12 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             </div>
           )}
 
-          {/* Free vs Credits */}
+          {/* Free vs BRIKO */}
           <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-bold text-slate-900">Gratuito (Solidarietà di vicinato)</div>
-                <div className="text-[11px] text-slate-500">Nessun credito richiesto, puro spirito di convivenza civile</div>
+                <div className="text-xs font-bold text-slate-900">Gratuito (0 BRIKO - Dono Puro)</div>
+                <div className="text-[11px] text-slate-500">Nessun BRIKO richiesto, puro spirito di convivenza civile e vicinato</div>
               </div>
               <input
                 type="checkbox"
@@ -648,53 +818,136 @@ export const CreateHelpModal: React.FC<CreateHelpModalProps> = ({
             {!isFree && (
               <div className="pt-2 border-t border-slate-200">
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Crediti HELP richiesti (per servizi speciali):
+                  Valore dell'aiuto in BRIKO (bricazioni):
                 </label>
                 <div className="flex items-center space-x-3">
                   <input
                     type="number"
                     min={1}
-                    max={10}
+                    max={50}
                     value={creditsRequired}
                     onChange={(e) => setCreditsRequired(Number(e.target.value))}
-                    className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold"
+                    className="w-24 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-amber-700"
                   />
-                  <div className="text-xs text-amber-600 flex items-center space-x-1 font-semibold">
-                    <Coins className="w-3.5 h-3.5" />
-                    <span>crediti HELP</span>
+                  <div className="text-xs text-amber-700 flex items-center space-x-1 font-extrabold bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
+                    <span>🧱</span>
+                    <span>BRIKO</span>
                   </div>
                 </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Chi accetterà questo aiuto dovrà disporre dei BRIKO indicati. Guadagnerai questi BRIKO a compimento della buone azione!
+                </p>
               </div>
             )}
           </div>
 
           {/* Duration Selector */}
           <div className="space-y-2 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-            <label className="block text-xs font-bold text-slate-700">Durata dell'annuncio (Cogli l'attimo)</label>
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Durata di validità della Gentilezza</label>
             <p className="text-[10px] text-slate-500 mb-2 leading-relaxed">
-              Gli annunci svaniscono dopo la scadenza per mantenere l'ecosistema in tempo reale.
+              Scegli quanto tempo rimarrà visibile il tuo annuncio. Alla scadenza o se lo annulli, scompare automaticamente per mantenere la bacheca aggiornata.
             </p>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
               {[
-                { label: '10 min', value: 10 },
-                { label: '30 min', value: 30 },
-                { label: '2 ore', value: 120 },
-                { label: '24 ore', value: 1440 },
+                { label: '1 Ora', value: 60 },
+                { label: '1 Giorno', value: 1440 },
+                { label: '1 Settimana', value: 10080 },
+                { label: '1 Mese', value: 43200 },
+                { label: '1 Anno', value: 525600 },
               ].map(opt => (
                 <button
                   key={opt.value}
                   type="button"
                   onClick={() => setDurationMinutes(opt.value)}
-                  className={`py-2 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                  className={`py-2 px-1 rounded-xl border text-[10px] sm:text-xs font-bold transition-all cursor-pointer text-center ${
                     durationMinutes === opt.value
-                      ? 'bg-slate-800 text-white border-slate-800 shadow-md'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                      ? 'bg-emerald-700 text-white border-emerald-700 shadow-md ring-2 ring-emerald-400'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
                   {opt.label}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Valore Gentilezza BRIKO */}
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-bold text-amber-950 uppercase tracking-wider">
+                  Valore della Gentilezza (BRIKO)
+                </label>
+                <p className="text-[10px] text-amber-800">
+                  Definisci il valore di questa azione (da 0 a 100 BRIKO). Il valore sarà effettivo se accettato.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-lg border border-amber-300">
+                <span className="text-sm font-black text-amber-700">{valoreGentilezzaBriko}</span>
+                <span className="text-xs">🧱</span>
+              </div>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={valoreGentilezzaBriko}
+              onChange={(e) => setValoreGentilezzaBriko(Number(e.target.value))}
+              className="w-full h-2 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600"
+            />
+            <div className="flex justify-between text-[10px] text-amber-800 font-bold">
+              <span>0 (Dono)</span>
+              <span>25</span>
+              <span>50</span>
+              <span>75</span>
+              <span>100 (Max)</span>
+            </div>
+          </div>
+
+          {/* Visibilità / Target Communities */}
+          <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Visibilità dell'Annuncio
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setTargetCommunityIds([])}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  targetCommunityIds.length === 0
+                    ? 'bg-emerald-700 text-white border-emerald-700'
+                    : 'bg-white text-slate-600 border-slate-200'
+                }`}
+              >
+                🌍 Aperto a Tutti
+              </button>
+              {user && communities.filter(c => user.communityIds?.includes(c.id)).map(comm => (
+                <button
+                  key={comm.id}
+                  type="button"
+                  onClick={() => {
+                    if (targetCommunityIds.includes(comm.id)) {
+                      setTargetCommunityIds(prev => prev.filter(id => id !== comm.id));
+                    } else {
+                      setTargetCommunityIds(prev => [...prev, comm.id]);
+                    }
+                  }}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    targetCommunityIds.includes(comm.id)
+                      ? 'bg-teal-700 text-white border-teal-700'
+                      : 'bg-white text-slate-600 border-slate-200'
+                  }`}
+                >
+                  🏛️ {comm.name.split(' ').slice(0, 2).join(' ')}...
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-500">
+              {targetCommunityIds.length === 0 
+                ? "L'annuncio sarà visibile a chiunque si trovi nel raggio d'azione."
+                : `L'annuncio sarà visibile solo ai membri delle comunità selezionate (${targetCommunityIds.length}).`}
+            </p>
           </div>
 
           {/* Submit */}

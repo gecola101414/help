@@ -20,8 +20,8 @@ export const MyHelpSection: React.FC<MyHelpSectionProps> = ({
   if (!user) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center space-y-4">
-        <h2 className="text-xl font-bold text-slate-900">Accedi a HELP con il tuo Nickname</h2>
-        <p className="text-sm text-slate-600">Configura il tuo profilo per visualizzare e gestire i tuoi aiuti.</p>
+        <h2 className="text-xl font-bold text-slate-900">Accedi a GEOKIND con il tuo Nickname</h2>
+        <p className="text-sm text-slate-600">Configura il tuo profilo per visualizzare e gestire le tue gentilezze.</p>
       </div>
     );
   }
@@ -34,14 +34,14 @@ export const MyHelpSection: React.FC<MyHelpSectionProps> = ({
       
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 font-sans">I Miei Aiuti & Offerte</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Gestisci ciò che hai pubblicato o gli aiuti in cui sei coinvolto</p>
+          <h1 className="text-2xl font-bold text-slate-900 font-sans">Le Mie Gentilezze & Offerte</h1>
+          <p className="text-xs text-slate-500 mt-0.5">Gestisci ciò che hai pubblicato o le gentilezze in cui sei coinvolto</p>
         </div>
         <button
           onClick={onOpenCreate}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-1.5"
+          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
         >
-          <span>+ Pubblica Nuovo Aiuto</span>
+          <span>+ Pubblica una Gentilezza</span>
         </button>
       </div>
 
